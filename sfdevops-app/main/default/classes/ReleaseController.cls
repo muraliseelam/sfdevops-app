@@ -47,8 +47,21 @@ public with sharing class ReleaseController {
         ];
     }
 
+    /**
+     * Release planning is a release-manager action. The page's reads run for every SF DevOps user
+     * (so the Release Board opens for a developer), but the writes check the object permission the
+     * Release Manager access group carries, because the queries run in system mode.
+     */
+    private static void requireReleaseManager(String action, Boolean create) {
+        Schema.DescribeSObjectResult d = Schema.SObjectType.CDO_Release__c;
+        if (create ? !d.isCreateable() : !d.isUpdateable()) {
+            throw fail(action + ' needs the Release Manager access group (CDO_Release_Manager_Access).');
+        }
+    }
+
     @AuraEnabled
     public static Id createRelease(String name, Id projectId, Date targetDate) {
+        requireReleaseManager('Creating a release', true);
         if (String.isBlank(name)) {
             throw fail('Enter a release name.');
         }
@@ -74,6 +87,7 @@ public with sharing class ReleaseController {
 
     @AuraEnabled
     public static Integer addWorkItems(Id releaseId, List<Id> workItemIds) {
+        requireReleaseManager('Adding work items to a release', false);
         if (workItemIds == null || workItemIds.isEmpty()) {
             throw fail('Select at least one work item to add.');
         }
@@ -119,6 +133,7 @@ public with sharing class ReleaseController {
 
     @AuraEnabled
     public static void removeWorkItem(Id workItemId) {
+        requireReleaseManager('Removing a work item from a release', false);
         List<CDO_Work_Item__c> rows = workItemId == null ? new List<CDO_Work_Item__c>() : [
             SELECT Id, Name, Release__c, Release__r.Name, Release__r.Status__c
             FROM CDO_Work_Item__c
@@ -146,6 +161,7 @@ public with sharing class ReleaseController {
     /** Cut the release branch from the release's work items (assemble-release.yml). */
     @AuraEnabled
     public static String assembleRelease(Id releaseId) {
+        requireReleaseManager('Assembling a release', false);
         CDO_Release__c r = loadRelease(releaseId);
         if (!ASSEMBLE_FROM.contains(r.Status__c)) {
             throw fail(r.Name + ' is ' + r.Status__c + '. A release can be assembled when it is Planned, Ready or Failed.');

@@ -79,9 +79,13 @@ PERMISSION_SETS = {
                        '17 tabs, and the read-only controllers. Part of every SF DevOps group.',
         'objects': lambda objects: {o: READ for o in objects},
         'fls': 'read',
+        # Every controller a page loads, so every tab opens for any SF DevOps user. Privileged
+        # writes in these classes check a custom permission or the object permission the
+        # Release Manager / Pipeline Admin groups carry.
         'classes': ['PipelineController', 'StoryBoardController', 'DoraController',
                     'QualityController', 'MetadataController', 'CDOWorkItemCommandCenter',
-                    'WorkItemController'],
+                    'WorkItemController', 'GovernanceController', 'GovernanceOpsController',
+                    'ReleaseController', 'DataController', 'IntegrationController'],
         'app': True,
         'tabs': ALL_TABS,
     },

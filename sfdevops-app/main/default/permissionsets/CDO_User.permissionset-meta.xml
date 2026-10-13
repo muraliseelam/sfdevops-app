@@ -10,7 +10,23 @@
         <enabled>true</enabled>
     </classAccesses>
     <classAccesses>
+        <apexClass>DataController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
         <apexClass>DoraController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>GovernanceController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>GovernanceOpsController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>IntegrationController</apexClass>
         <enabled>true</enabled>
     </classAccesses>
     <classAccesses>
@@ -23,6 +39,10 @@
     </classAccesses>
     <classAccesses>
         <apexClass>QualityController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>ReleaseController</apexClass>
         <enabled>true</enabled>
     </classAccesses>
     <classAccesses>

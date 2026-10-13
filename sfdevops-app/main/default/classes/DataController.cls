@@ -59,8 +59,16 @@ public with sharing class DataController {
      * org's schema when the object exists here; objects that exist only in the target orgs are
      * accepted as typed.
      */
+    /** Data deploys are a release-manager action; developers can open the page and read it. */
+    private static void requireDataAccess(String action, Boolean allowed) {
+        if (!allowed) {
+            throw fail(action + ' needs the Release Manager access group (CDO_Release_Manager_Access).');
+        }
+    }
+
     @AuraEnabled
     public static Id saveTemplate(CDO_Data_Template__c t) {
+        requireDataAccess('Saving a data template', Schema.SObjectType.CDO_Data_Template__c.isCreateable());
         if (t == null) {
             throw fail('Nothing to save.');
         }
@@ -105,6 +113,7 @@ public with sharing class DataController {
 
     @AuraEnabled
     public static void deleteTemplate(Id templateId) {
+        requireDataAccess('Deleting a data template', Schema.SObjectType.CDO_Data_Template__c.isDeletable());
         List<CDO_Data_Template__c> rows = templateId == null ? new List<CDO_Data_Template__c>() :
             [SELECT Id FROM CDO_Data_Template__c WHERE Id = :templateId];
         if (rows.isEmpty()) {
@@ -124,6 +133,7 @@ public with sharing class DataController {
      */
     @AuraEnabled
     public static String deployDataSet(Id dataSetId, String sourceEnv, String targetEnv) {
+        requireDataAccess('Deploying a data set', Schema.SObjectType.CDO_Data_Set__c.isUpdateable());
         DataSetView view = getDataSet(dataSetId);
         if (view.dataSet == null) {
             throw fail('That data set no longer exists or you do not have access to it.');

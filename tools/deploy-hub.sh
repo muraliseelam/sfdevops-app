@@ -6,6 +6,10 @@
 # the CLI's exit code. With --tests the Apex step runs the hub's test classes
 # (RunSpecifiedTests); production orgs always need that.
 #
+# Scheduled Apex blocks redeploying every class it references ("This schedulable class has jobs
+# pending or in progress"). Rather than switch on the org-wide "allow deployments with Apex jobs"
+# setting, this pauses the promotion reconciler for the deploy and reschedules it afterwards.
+#
 # Run from the root of a checkout of branch platform/sfdevops-app, with the org logged in to the
 # sf CLI. Afterwards: grant access (sf-pipeline/scripts/grant-app-access.sh) and seed the pipeline
 # records (sf-pipeline/scripts/seed-pipeline.py) from the pipeline branch.
@@ -15,6 +19,7 @@ org="${1:?usage: deploy-hub.sh <org-alias> [--tests]}"
 run_tests=false
 [[ "${2:-}" == "--tests" ]] && run_tests=true
 D=sfdevops-app/main/default
+RECONCILER="SF DevOps reconciler"
 PY=""
 for c in python3 python py; do
   if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then PY="$c"; break; fi
@@ -36,11 +41,11 @@ r = data.get("result") or {}
 status = r.get("status") or "Failed"
 print(f"    {sys.argv[2]}: {status} (deploy {r.get('id')}, {r.get('numberComponentsDeployed')} components, tests {r.get('numberTestsCompleted')}/{r.get('numberTestsTotal')})")
 details = r.get("details") or {}
-for f in (details.get("componentFailures") or []) if isinstance(details.get("componentFailures"), list) else [details.get("componentFailures")] if details.get("componentFailures") else []:
-    print(f"    ! {f.get('componentType')} {f.get('fullName')}: {f.get('problem')}")
-rt = details.get("runTestResult") or {}
-fails = rt.get("failures") or []
+fails = details.get("componentFailures") or []
 for f in fails if isinstance(fails, list) else [fails]:
+    print(f"    ! {f.get('componentType')} {f.get('fullName')}: {f.get('problem')}")
+tf = (details.get("runTestResult") or {}).get("failures") or []
+for f in tf if isinstance(tf, list) else [tf]:
     print(f"    ! test {f.get('name')}.{f.get('methodName')}: {f.get('message')}")
 if status != "Succeeded":
     if not r:
@@ -49,6 +54,45 @@ if status != "Succeeded":
 PY
   rm -f "$out"
 }
+
+apex() {  # apex <file>: run anonymous Apex, fail on a compile or runtime error
+  sf apex run --file "$1" --target-org "$org" --json | "$PY" -c '
+import json, sys
+r = json.load(sys.stdin).get("result") or {}
+if not r.get("success"):
+    print(r.get("compileProblem") or r.get("exceptionMessage"))
+    sys.exit(1)
+'
+}
+
+work="$(mktemp -d)"
+cat > "$work/pause.apex" <<APEX
+for (CronTrigger ct : [SELECT Id FROM CronTrigger WHERE CronJobDetail.Name LIKE '${RECONCILER}%']) {
+    System.abortJob(ct.Id);
+}
+APEX
+cat > "$work/resume.apex" <<APEX
+for (Integer m : new List<Integer>{ 0, 15, 30, 45 }) {
+    System.schedule('${RECONCILER} :' + String.valueOf(m).leftPad(2, '0'), '0 ' + m + ' * * * ?',
+        new CDO_PromotionReconciler.ReconcileJob());
+}
+APEX
+
+paused="$(sf data query --target-org "$org" --json \
+  --query "SELECT COUNT() FROM CronTrigger WHERE CronJobDetail.Name LIKE '${RECONCILER}%'" 2>/dev/null \
+  | "$PY" -c "import json,sys; print((json.load(sys.stdin).get('result') or {}).get('totalSize', 0))" 2>/dev/null || echo 0)"
+resume() {
+  if [[ "${paused:-0}" != "0" ]]; then
+    echo "==> rescheduling the promotion reconciler"
+    apex "$work/resume.apex" || echo "    ! could not reschedule; run seed-pipeline.py to schedule it again"
+  fi
+  rm -rf "$work"
+}
+trap resume EXIT
+if [[ "${paused:-0}" != "0" ]]; then
+  echo "==> pausing the promotion reconciler (${paused} scheduled job(s)) for the deploy"
+  apex "$work/pause.apex"
+fi
 
 step "1/10 objects, custom setting, custom permissions, credentials" \
   --source-dir "$D/objects" --source-dir "$D/customPermissions" \
