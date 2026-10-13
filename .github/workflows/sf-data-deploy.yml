@@ -149,6 +149,7 @@ jobs:
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
           HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           EVENT_TYPE: Data
+          DEPLOYMENT_ID: ${{ inputs.data_set_id }}
           STATUS: ${{ steps.upsert.outcome == 'success' && 'Success' || 'Failed' }}
           ENVIRONMENT: ${{ inputs.target_env }}
           COMPONENT_COUNT: ${{ steps.upsert.outputs.records }}

@@ -17,6 +17,7 @@ Records
                       Gate_Type__c Review on the entry stage, Self_Service in between,
                       Required_Reviewer on production
   CDO_Settings__c     org defaults: GitHub owner/repo, workflow ref (= baseline), project key
+  Scheduled jobs      the promotion reconciler, every 15 minutes (skip with --no-schedule)
 
 The org alias defaults to hub.org_alias from the config. Percent fields are written as
 literal percents (85 means 85 %).
@@ -153,6 +154,32 @@ def seed_settings(org, settings):
     print("  CDO_Settings__c: org defaults set")
 
 
+RECONCILER = "SF DevOps reconciler"
+
+
+def schedule_reconciler(org, tmp):
+    """Every 15 minutes, sweep promotions whose workflow never called back (a status in the hub is
+    not evidence a run started). Salesforce cron has no minute step, so four hourly jobs."""
+    have = {r["CronJobDetail"]["Name"] for r in query(
+        org, f"SELECT CronJobDetail.Name FROM CronTrigger WHERE CronJobDetail.Name LIKE '{RECONCILER}%'")}
+    lines = []
+    for minute in (0, 15, 30, 45):
+        name = f"{RECONCILER} :{minute:02d}"
+        if name not in have:
+            lines.append(f"System.schedule('{name}', '0 {minute} * * * ?', new CDO_PromotionReconciler.ReconcileJob());")
+    if not lines:
+        print("  reconciler: already scheduled")
+        return
+    path = os.path.join(tmp, "schedule.apex")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    res = sf_json(["apex", "run", "--file", path, "--target-org", org])
+    r = res.get("result") or {}
+    if res.get("status", 1) != 0 or not r.get("success", False):
+        raise SystemExit(f"scheduling the reconciler failed: {r.get('compileProblem') or r.get('exceptionMessage') or res.get('message')}")
+    print(f"  reconciler: scheduled {len(lines)} job(s) (every 15 minutes)")
+
+
 def check(org, key, environments, stages):
     drift = []
     got = {r["Key__c"]: r for r in query(org, f"SELECT Key__c, Branch__c, GitHub_Environment__c, Type__c FROM CDO_Environment__c WHERE Project__r.Key__c = '{key}'")}
@@ -179,6 +206,7 @@ def main(argv):
     p.add_argument("--org", default="", help="hub org alias (default: hub.org_alias)")
     p.add_argument("--check", action="store_true", help="report drift; write nothing")
     p.add_argument("--dry-run", action="store_true", help="print the records; write nothing")
+    p.add_argument("--no-schedule", action="store_true", help="do not schedule the hub's promotion reconciler")
     a = p.parse_args(argv)
     raw = planlib.load_yaml(CONFIG)
     cfg = planlib.build_plan(raw)
@@ -201,7 +229,9 @@ def main(argv):
         upsert(org, "CDO_Project__c", [project], tmp)
         upsert(org, "CDO_Environment__c", environments, tmp)
         upsert(org, "CDO_Stage__c", stages, tmp)
-    seed_settings(org, settings)
+        seed_settings(org, settings)
+        if not a.no_schedule:
+            schedule_reconciler(org, tmp)
     drift = check(org, key, environments, stages)
     print("verified: hub matches pipeline.config.yml" if not drift else "\n".join(drift))
     return 1 if drift else 0

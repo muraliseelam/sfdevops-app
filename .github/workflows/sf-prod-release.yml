@@ -316,6 +316,7 @@ jobs:
           COMMIT_SHA: ${{ steps.merge.outputs.merge_sha }}
           DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
           MESSAGE: ${{ steps.release.outputs.url || steps.merge.outputs.reason || 'Quick deploy did not succeed' }}
+          PULL_REQUEST_URL: ${{ steps.release.outputs.url }}
           PROMOTION_BRANCH: ${{ needs.plan.outputs.promotion_prefix }}${{ needs.plan.outputs.label }}-to-${{ needs.plan.outputs.prod_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

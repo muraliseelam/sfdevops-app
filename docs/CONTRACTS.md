@@ -141,6 +141,18 @@ successful one.
   Code that means "nothing has been deployed here yet" leaves the field alone.
 - Every call writes one `CDO_Audit_Event__c`.
 
+**Conventions and refinements (as implemented in the hub):**
+- De-dup matches on `runUrl` only within the same stage and the same `checkOnly` flag, so a
+  production validation and the quick deploy that follows it in the same run stay two rows.
+- A repeated `Success`, or a late `Running`, for an already-Deployed promotion adds no row and
+  never reopens it. A callback for a promotion that somehow has no junction row writes it.
+- A successful check-only promotion is marked `Deployed` with a message saying nothing was
+  deployed; no work item moves and environment health is untouched.
+- Release events: `pullRequestUrl` carries the GitHub Release URL, and `Tag__c` is taken from its
+  `/releases/tag/<tag>` path. Data events: `deploymentId` carries the `CDO_Data_Set__c` id, whose
+  status the hub updates.
+- Commit events carry no branch: `Feature_Branch__c` is filled from `featureBranch(wi)` when blank.
+
 **Effects of `applyWorkItemEvent`:**
 - `Commit`: upsert a `CDO_Commit__c` on `SHA__c`, and upsert `CDO_Component__c` on
   `Work_Item_Key__c` (= `WI-0032|ApexClass:Foo`), stamping `Action__c`, `Unique_ID__c`,
@@ -240,7 +252,7 @@ public static Id createWorkItem(CDO_Work_Item__c wi);           // defaults Proj
 public static void requestCommit(Id workItemId, String componentsJson, String message);
 public static String requestListChanges(Id workItemId, String sourceOrg);   // returns request id
 public static void openPullRequest(Id workItemId);
-public static void requestValidation(Id workItemId);
+public static void requestValidation(Id workItemId);           // these four throw WorkItemException when GitHub is not configured or dispatch is off
 public static CDO_Stage__c nextStage(Id workItemId);             // null when already at production
 public static void markBlocked(Set<Id> workItemIds, String reason);
 public static String featureBranch(CDO_Work_Item__c wi);         // Feature_Branch__c or 'feature/' + Name
@@ -255,7 +267,11 @@ public static void onPromotionFinished(Id promotionId);
 
 // CDO_PromotionReconciler
 public static void resolvePromotedWorkItems(Id promotionId);
-public class ReconcileJob implements Schedulable, Queueable, Database.AllowsCallouts { ... } // stuck-run sweep
+public class ReconcileJob implements Schedulable { ... }   // schedule this (seed-pipeline.py does)
+public class SweepJob implements Queueable, Database.AllowsCallouts { ... }  // the stuck-run sweep itself
+public static void sweepNow();                                  // run a sweep immediately
+// Salesforce refuses to enqueue a class that also implements Schedulable, so the scheduled job
+// hands over to SweepJob.
 
 // CDO_CallbackService
 public static CDO_CallbackResource.CallbackResponse apply(CDO_CallbackResource.CallbackRequest req);
