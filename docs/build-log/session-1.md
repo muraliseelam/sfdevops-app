@@ -148,3 +148,23 @@ reschedules it (verified: 4 jobs scheduled after the redeploy).
 ## Environment branches
 
 `int`, `qa`, `stage` created from `main` @ 99cc96493bc2 (protection deferred until the live runs pass).
+
+## Unlocked package
+
+`sf package create` (no namespace) → package `0Hohm0000000VAHCA2`. `sf package version create
+--code-coverage` → version **0.1.0.1 = `04thm000002tWkTAAU`**, `HasPassedCodeCoverageCheck: True`,
+Apex coverage **94 %**, not yet promoted (beta). One-command install into a brand-new scratch org
+(`sfp-pkgtest`, 1-day expiry): `sf package install --package 04thm000002tWkTAAU` → `SUCCESS`;
+`SF DevOps 0.1.0.1` listed as installed; the `SF_DevOps` app present.
+
+## Fixes found by review before the live runs
+
+- Current sf CLIs redact both `accessToken` and `sfdxAuthUrl` in `sf org display` (with or
+  without `--verbose`), and the redacted text is non-empty, so a presence check passes. The
+  bootstrap now reads `sf org auth show-sfdx-auth-url --no-prompt` and checks `force://`
+  (verified true for sfp-int and sfp-hub, boolean only). Hub callbacks and the Named Credential
+  token now go through `sf api request rest` (path without a leading slash; with one it 404s),
+  so no token is read anywhere. Live: an empty callback body gets the hub's own HTTP 400
+  validation message, proving routing and auth.
+- `gate.sh` gained tests (14 assertions) proving the entry-stage label gate without a second
+  GitHub account.
