@@ -82,7 +82,7 @@ jobs:
           python3 - <<'PY'
           import json, os, re
           pr = json.load(open("pr.json"))
-          m = re.search(r"^\s*Specified-Tests:\s*(.+)$", pr.get("body") or "", re.M | re.I)
+          m = re.search(r"^[ \t]*Specified-Tests:[ \t]*(\S.*)$", pr.get("body") or "", re.M | re.I)
           tests = ",".join(t.strip() for t in m.group(1).split(",") if t.strip()) if m else ""
           with open(os.environ["GITHUB_OUTPUT"], "a") as o:
               o.write(f"number={pr['number']}\nbase={pr['baseRefName']}\nhead_ref={pr['headRefName']}\n")

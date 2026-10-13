@@ -67,9 +67,11 @@ id, so `CDO_PromotionReconciler` can find a run whose callback never arrived.
 
 ## 2. Inbound — REST callbacks (`/services/apexrest/cdo/...`)
 
-The runner authenticates to the hub with `sf-pipeline/scripts/auth-hub.sh` (JWT, repo secrets
-`HUB_*`) and POSTs JSON with `sf-pipeline/scripts/hub-callback.sh`. If the `HUB_*` secrets are
-absent, the callback scripts print a notice and exit 0, so the pipeline still runs without a hub.
+The runner authenticates to the hub with `sf-pipeline/scripts/auth-hub.sh` (repository secret
+`HUB_AUTH_URL`, or the JWT set `HUB_CONSUMER_KEY` / `HUB_USERNAME` / `HUB_JWT_KEY`) and POSTs JSON
+with `sf-pipeline/scripts/hub-callback.sh`, which calls `sf api request rest`, so the session
+token is never read or printed. If no hub secret is set, the callback scripts print a notice and
+exit 0, so the pipeline still runs without a hub.
 
 ### 2.1 `POST /cdo/deploy-callback` — `CDO_CallbackResource`
 

@@ -5,9 +5,10 @@
 #   json-file  the request body
 #
 # Uses the org alias `hub` (see auth-hub.sh). When it is not authenticated the script prints a
-# notice and exits 0, so the pipeline runs without a hub. Otherwise it reads the access token
-# and instance URL from `sf org display -o hub --json`, masks the token, and POSTs the file to
-# $instance/services/apexrest/cdo/<endpoint>, retrying with backoff on HTTP 5xx or a
+# notice and exits 0, so the pipeline runs without a hub. Otherwise it POSTs the file to
+# services/apexrest/cdo/<endpoint> with `sf api request rest`, which signs the request with the
+# CLI's own session, so no access token is ever read, printed or put on a command line (recent
+# CLIs redact the token in `sf org display` anyway). Retries with backoff on HTTP 5xx or a
 # connection error. The HTTP status and response body are printed.
 #
 # Env
@@ -61,59 +62,37 @@ if ! command -v sf >/dev/null 2>&1; then
   exit 0
 fi
 
-display_json=""
-if ! display_json="$(sf org display -o "$alias_name" --json 2>/dev/null)"; then
+if ! sf org display -o "$alias_name" --json >/dev/null 2>&1; then
   notice "hub callback '$endpoint' skipped: org alias '$alias_name' is not authenticated (hub callbacks disabled)"
   gh_output http_status ""
   exit 0
 fi
 
-PY="$(find_python)" || give_up "hub callback '$endpoint' not sent: python3 is required to read the hub session"
-
-# The JSON travels on stdin, never on a command line.
-token="$(printf '%s' "$display_json" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["result"].get("accessToken") or "")' 2>/dev/null || true)"
-instance="$(printf '%s' "$display_json" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["result"].get("instanceUrl") or "")' 2>/dev/null || true)"
-display_json=""
-token="${token//$'\r'/}"
-instance="${instance//$'\r'/}"
-if [[ -z "$token" || -z "$instance" ]]; then
-  give_up "hub callback '$endpoint' not sent: 'sf org display -o $alias_name' returned no access token or instance URL"
-fi
-mask "$token"
-
+PY="$(find_python)" || give_up "hub callback '$endpoint' not sent: python3 is required to check the payload"
 if ! "$PY" -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$json_file" 2>/dev/null; then
   give_up "hub callback '$endpoint' not sent: '$json_file' is not valid JSON"
 fi
 
-require_cmd curl
-url="${instance%/}/services/apexrest/cdo/$endpoint"
-
+path="services/apexrest/cdo/$endpoint"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
-hdr="$workdir/headers"
-resp="$workdir/body"
-errf="$workdir/stderr"
-# The bearer token goes into a private header file (printf is a builtin), so it never shows up
-# in a process listing or in the log.
-(umask 077 && printf 'Authorization: Bearer %s\n' "$token" >"$hdr")
-token=""
+raw="$workdir/raw"
 
 attempts=$((retries + 1))
 code="000"
 for ((i = 1; i <= attempts; i++)); do
-  : >"$resp"
-  rc=0
-  code="$(curl -sS -o "$resp" -w '%{http_code}' \
-    --connect-timeout 15 --max-time 120 \
-    -X POST -H @"$hdr" -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    --data-binary @"$json_file" "$url" 2>"$errf")" || rc=$?
+  : >"$raw"
+  sf api request rest "$path" --method POST --header "Content-Type:application/json" \
+    --header "Accept:application/json" --body "@$json_file" --target-org "$alias_name" --include \
+    >"$raw" 2>&1 || true
+  code="$(tr -d '\r' <"$raw" | sed -n 's#^HTTP/[0-9.]* \([0-9][0-9][0-9]\).*#\1#p' | head -n 1)"
   [[ -n "$code" ]] || code="000"
   if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
     break
   fi
   if [[ "$code" == "000" || "$code" =~ ^5[0-9][0-9]$ ]]; then
     reason="HTTP $code"
-    [[ "$code" == "000" ]] && reason="connection error (curl exit $rc: $(tr -d '\r' <"$errf" | head -n 1))"
+    [[ "$code" == "000" ]] && reason="no HTTP response ($(tr -d '\r' <"$raw" | grep -v '^\s*$' | head -n 1))"
     if ((i < attempts)); then
       wait_s=$((backoff * (1 << (i - 1))))
       echo "hub callback '$endpoint' attempt $i/$attempts failed: $reason; retrying in ${wait_s}s"
@@ -124,12 +103,14 @@ for ((i = 1; i <= attempts; i++)); do
   break
 done
 
-echo "hub callback '$endpoint' -> $url"
+echo "hub callback '$endpoint' -> $path (org alias $alias_name)"
 echo "HTTP status: $code"
 echo "Response body:"
-if [[ -s "$resp" ]]; then
-  cat "$resp"
-  echo
+# `--include` prints the status line and headers, then the body with no blank line between:
+# the body starts at the first line that opens a JSON value.
+body="$(tr -d '\r' <"$raw" | awk 'found || /^[[{]/ {found=1; print}')"
+if [[ -n "$body" ]]; then
+  printf '%s\n' "$body"
 else
   echo "(empty)"
 fi
@@ -139,6 +120,6 @@ if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
   exit 0
 fi
 if [[ "$code" == "000" ]]; then
-  give_up "hub callback '$endpoint' could not reach $url after $attempts attempt(s)" "$code"
+  give_up "hub callback '$endpoint' got no HTTP response after $attempts attempt(s)" "$code"
 fi
 give_up "hub callback '$endpoint' returned HTTP $code" "$code"

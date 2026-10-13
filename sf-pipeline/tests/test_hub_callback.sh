@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for hub-callback.sh and hub-workitem-callback.sh with stub `sf` and `curl`.
-# The "token" is a fake string; the tests assert it never reaches the log outside Actions.
+# Tests for hub-callback.sh and hub-workitem-callback.sh with a stub `sf`.
+# Callbacks go through `sf api request rest`, so no access token is ever read or printed.
 set -uo pipefail
 # shellcheck source=helpers.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.sh"
@@ -9,54 +9,48 @@ T="$(new_tmp)"
 BIN="$T/bin"
 STUB_DIR="$T/stub"
 mkdir -p "$STUB_DIR"
-FAKE_TOKEN="FAKE_HUB_TOKEN_42"
 
 write_stub "$BIN" sf <<'EOF'
 #!/usr/bin/env bash
+# Stub sf: `org display` answers the auth check; `api request rest` answers with the next HTTP
+# code listed in $STUB_DIR/codes, records each call, and keeps a copy of the posted body.
 if [[ "${1:-} ${2:-}" == "org display" ]]; then
+  echo "org display $*" >>"$STUB_DIR/calls"
   if [[ "${STUB_HUB_AUTHED:-true}" != "true" ]]; then
     echo '{"status":1,"name":"NamedOrgNotFoundError","message":"No authorization information found for hub."}'
     exit 1
   fi
-  echo '{"status":0,"result":{"accessToken":"FAKE_HUB_TOKEN_42","instanceUrl":"https://hub.example.invalid","username":"ci@example.com"}}'
+  echo '{"status":0,"result":{"accessToken":"[REDACTED]","instanceUrl":"https://hub.example.invalid","username":"ci@example.com"}}'
+  exit 0
+fi
+if [[ "${1:-} ${2:-} ${3:-}" == "api request rest" ]]; then
+  shift 3
+  path="" body="" org=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method | -X) echo "method: $2" >>"$STUB_DIR/calls"; shift 2 ;;
+      --header | -H) echo "header: $2" >>"$STUB_DIR/calls"; shift 2 ;;
+      --body | -b) body="${2#@}"; shift 2 ;;
+      --target-org | -o) org="$2"; shift 2 ;;
+      --include | -i) shift ;;
+      -*) shift ;;
+      *) path="$1"; shift ;;
+    esac
+  done
+  n=$(($(cat "$STUB_DIR/count" 2>/dev/null || echo 0) + 1))
+  echo "$n" >"$STUB_DIR/count"
+  code="$(sed -n "${n}p" "$STUB_DIR/codes")"
+  [[ -n "$code" ]] || code="$(tail -n 1 "$STUB_DIR/codes")"
+  echo "path: $path org: $org" >>"$STUB_DIR/calls"
+  [[ -n "$body" && -f "$body" ]] && cp "$body" "$STUB_DIR/last-body.json"
+  if [[ "$code" == "000" ]]; then
+    echo "Error (1): getaddrinfo ENOTFOUND hub.example.invalid"
+    exit 1
+  fi
+  printf 'HTTP/1.1 %s\r\ncontent-type: application/json\r\nx-request-id: abc\r\n{"success":true,"deploymentId":"a0Bfake","code":"%s"}\r\n' "$code" "$code"
   exit 0
 fi
 exit 0
-EOF
-
-write_stub "$BIN" curl <<'EOF'
-#!/usr/bin/env bash
-# Stub curl: answers with the next HTTP code listed in $STUB_DIR/codes and records each call.
-out="" data="" url=""
-hdr_files=()
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    -w | --connect-timeout | --max-time | -X) shift 2 ;;
-    -H)
-      if [[ "$2" == @* ]]; then hdr_files+=("${2#@}"); else echo "header: $2" >>"$STUB_DIR/calls"; fi
-      shift 2 ;;
-    --data-binary) data="${2#@}"; shift 2 ;;
-    -*) shift ;;
-    *) url="$1"; shift ;;
-  esac
-done
-n=$(($(cat "$STUB_DIR/count" 2>/dev/null || echo 0) + 1))
-echo "$n" >"$STUB_DIR/count"
-code="$(sed -n "${n}p" "$STUB_DIR/codes")"
-[[ -n "$code" ]] || code="$(tail -n 1 "$STUB_DIR/codes")"
-echo "url: $url" >>"$STUB_DIR/calls"
-for f in "${hdr_files[@]}"; do
-  if grep -q '^Authorization: Bearer FAKE_HUB_TOKEN_42$' "$f"; then echo "auth: bearer-ok" >>"$STUB_DIR/calls"; fi
-done
-[[ -n "$data" ]] && cp "$data" "$STUB_DIR/last-body.json"
-if [[ "$code" == "000" ]]; then
-  echo "curl: (7) Failed to connect to hub.example.invalid" >&2
-  printf '000'
-  exit 7
-fi
-printf '{"success":true,"deploymentId":"a0Bfake","code":"%s"}' "$code" >"$out"
-printf '%s' "$code"
 EOF
 
 BODY="$T/body.json"
@@ -89,23 +83,23 @@ assert_eq 2 "$RC" "a missing json file argument is a usage error"
 run_cb "200" STUB_HUB_AUTHED=false -- "$SCRIPTS_DIR/hub-callback.sh" deploy-callback "$BODY"
 assert_eq 0 "$RC" "an unauthenticated hub exits 0"
 assert_contains "$OUT" "::notice::" "and prints a notice"
-assert_eq 0 "$ATTEMPTS" "and never calls curl"
+assert_eq 0 "$ATTEMPTS" "and never posts"
 
 section "hub-callback.sh: delivery"
 run_cb "200" -- "$SCRIPTS_DIR/hub-callback.sh" deploy-callback "$BODY"
 assert_eq 0 "$RC" "HTTP 200 exits 0"
 assert_eq 200 "$(out_get "$OUTF" http_status)" "http_status=200"
-assert_contains "$CALLS" "url: https://hub.example.invalid/services/apexrest/cdo/deploy-callback" "posts to the Apex REST endpoint"
-assert_contains "$CALLS" "auth: bearer-ok" "sends the bearer token from a header file"
-assert_contains "$CALLS" "header: Content-Type: application/json" "sends Content-Type application/json"
+assert_contains "$CALLS" "path: services/apexrest/cdo/deploy-callback org: hub" "posts to the Apex REST endpoint through the hub alias"
+assert_contains "$CALLS" "method: POST" "uses POST"
+assert_contains "$CALLS" "header: Content-Type:application/json" "sends Content-Type application/json"
+assert_not_contains "$CALLS" "--verbose" "never asks the CLI for a session token"
 assert_eq "$(cat "$BODY")" "$(cat "$STUB_DIR/last-body.json")" "posts the file unchanged"
 assert_contains "$OUT" "HTTP status: 200" "prints the HTTP status"
 assert_contains "$OUT" '"deploymentId":"a0Bfake"' "prints the response body"
-assert_not_contains "$OUT" "$FAKE_TOKEN" "the token is not printed outside Actions"
+assert_not_contains "$OUT" "REDACTED" "no session detail reaches the log"
 
-run_cb "200" GITHUB_ACTIONS=true -- "$SCRIPTS_DIR/hub-callback.sh" merge-status "$BODY"
-assert_contains "$OUT" "::add-mask::$FAKE_TOKEN" "inside Actions the token is masked"
-assert_contains "$CALLS" "/services/apexrest/cdo/merge-status" "merge-status endpoint"
+run_cb "200" HUB_ALIAS=myhub -- "$SCRIPTS_DIR/hub-callback.sh" merge-status "$BODY"
+assert_contains "$CALLS" "path: services/apexrest/cdo/merge-status org: myhub" "merge-status endpoint, HUB_ALIAS honoured"
 
 run_cb "503 502 200" -- "$SCRIPTS_DIR/hub-callback.sh" source-members "$BODY"
 assert_eq 0 "$RC" "5xx then 200 succeeds"
@@ -155,7 +149,7 @@ assert_eq "false" "$(json_get "$PAYLOAD" '"message" in d')" "empty fields are om
 assert_eq "A.one: boom|B.two: bang" "$(json_get "$PAYLOAD" '"|".join(d["failingMethods"].splitlines())')" "multi-line failingMethods keeps its lines"
 assert_eq "ApexClass:Foo" "$(json_get "$PAYLOAD" 'd["components"][0]["uniqueId"]')" "components array is embedded"
 assert_eq "https://github.com/acme/sf/actions/runs/99" "$(json_get "$PAYLOAD" 'd["runUrl"]')" "runUrl defaults to this run"
-assert_contains "$CALLS" "/services/apexrest/cdo/deploy-callback" "posts to deploy-callback"
+assert_contains "$CALLS" "services/apexrest/cdo/deploy-callback" "posts to deploy-callback"
 assert_eq "$(cat "$PAYLOAD")" "$(cat "$STUB_DIR/last-body.json")" "the posted body is the payload"
 
 run_cb "200" WORK_ITEM=WI-1 EVENT_TYPE=Deploy COVERAGE_PERCENT=abc RUN_URL=https://example.invalid/run/1 \

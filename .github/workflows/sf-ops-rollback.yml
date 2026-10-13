@@ -147,7 +147,7 @@ jobs:
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
           HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           EVENT_TYPE: Rollback
-          STATUS: ${{ steps.deploy.outputs.outcome == 'success' && 'Success' || 'Failed' }}
+          STATUS: ${{ (steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes') && 'Success' || 'Failed' }}
           ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
           COMMIT_SHA: ${{ steps.merge.outputs.merge_sha || steps.restore.outputs.head }}
           DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}

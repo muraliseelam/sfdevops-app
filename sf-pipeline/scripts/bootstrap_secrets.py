@@ -22,12 +22,12 @@ What it does
      HUB_CONSUMER_KEY, plus HUB_USERNAME and HUB_INSTANCE_URL), so workflows can call back.
   4. Asks once, with hidden input, for a GitHub token and stores it in the hub's Named
      Credential (External Credential GitHub_API_Credential, principal GitHub_PAT) so the hub
-     can start workflows. With --set-gh-pat it also stores it as the GH_PAT repository secret.
+     can start workflows, and as the GH_PAT repository secret (skip with --no-gh-pat).
 
 Usage
   py sf-pipeline/scripts/bootstrap_secrets.py            (Windows)
   python3 sf-pipeline/scripts/bootstrap_secrets.py       (macOS / Linux)
-  Options: --dry-run  --jwt --consumer-keys keys.json  --set-gh-pat  --skip-token
+  Options: --dry-run  --jwt --consumer-keys keys.json  --generate-jwt-cert  --no-gh-pat  --skip-token
            --skip-environments  --reviewer <github-login>  --repo owner/name
 """
 
@@ -145,12 +145,23 @@ class Bootstrap:
             info = self.org(alias)
             return "jwt", {"CONSUMER_KEY": keys[alias], "JWT_KEY": self.jwt_key_b64(),
                            "USERNAME": info["username"], "INSTANCE_URL": info.get("instanceUrl", "")}
-        info = self.org(alias, verbose=True)
-        url = info.get("sfdxAuthUrl")
-        if not url:
-            raise Fail(f"the CLI login for '{alias}' has no refresh token to share. Log in again with "
-                       f"`sf org login web --alias {alias}` (or use --jwt).")
+        info = self.org(alias)
+        url = self.auth_url(alias)
         return "auth-url", {"AUTH_URL": url, "USERNAME": info["username"], "INSTANCE_URL": info.get("instanceUrl", "")}
+
+    def auth_url(self, alias):
+        """The org's SFDX auth URL. `sf org display` redacts it in current CLIs, so read it from
+        `sf org auth show-sfdx-auth-url`, keep it in memory only, and check that it is real."""
+        out = run([self.sf, "org", "auth", "show-sfdx-auth-url", "--target-org", alias, "--no-prompt", "--json"],
+                  check=False)
+        try:
+            url = (json.loads(out).get("result") or {}).get("sfdxAuthUrl") or ""
+        except ValueError:
+            url = ""
+        if not url.startswith("force://"):
+            raise Fail(f"the CLI login for '{alias}' has no shareable auth URL (it needs a refresh token). "
+                       f"Log in again with `sf org login web --alias {alias}`, or use --jwt.")
+        return url
 
     def jwt_key_b64(self):
         import base64
@@ -167,23 +178,30 @@ class Bootstrap:
             return base64.b64encode(fh.read()).decode("ascii")
 
     def store_named_credential(self, hub_alias, token):
-        info = self.org(hub_alias, verbose=True)
-        access, inst = info.get("accessToken"), info.get("instanceUrl")
-        body = {"externalCredential": EXT_CRED, "principalName": PRINCIPAL, "principalType": "NamedPrincipal",
-                "credentials": {"Token": {"value": token, "encrypted": True}}}
-        url = f"{inst}/services/data/{API}/named-credentials/credential"
+        """Store the GitHub token in the hub's External Credential principal through the Connect
+        REST API. `sf api request rest` signs the call with the CLI's own session and reads the
+        body from stdin, so the token never touches argv, a file, or the log."""
+        body = json.dumps({"externalCredential": EXT_CRED, "principalName": PRINCIPAL,
+                           "principalType": "NamedPrincipal",
+                           "credentials": {"Token": {"value": token, "encrypted": True}}})
+        path = f"services/data/{API}/named-credentials/credential"
         for method in ("POST", "PUT"):
-            req = urllib.request.Request(url, method=method, data=json.dumps(body).encode("utf-8"),
-                                         headers={"Authorization": f"Bearer {access}", "Content-Type": "application/json"})
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    log(f"  hub Named Credential token stored ({method} {resp.status})")
-                    return True
-            except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", "replace")[:300]
-                if method == "POST" and exc.code in (400, 409):
-                    continue  # already exists: update it instead
-                log(f"  ! could not store the token through the API ({method} {exc.code}): {detail}")
+            out = run([self.sf, "api", "request", "rest", path, "--method", method,
+                       "--header", "Content-Type:application/json", "--body", "-",
+                       "--target-org", hub_alias, "--include"], stdin=body, check=False)
+            status = ""
+            for line in out.splitlines():
+                if line.startswith("HTTP/"):
+                    parts = line.split()
+                    status = parts[1] if len(parts) > 1 else ""
+                    break
+            if status.startswith("2"):
+                log(f"  hub Named Credential token stored ({method} {status})")
+                return True
+            if method == "POST" and status in ("400", "409"):
+                continue  # the principal already has a credential: update it instead
+            detail = " ".join(l.strip() for l in out.splitlines() if '"message"' in l or '"errorCode"' in l)[:300]
+            log(f"  ! could not store the token through the API ({method} {status or 'no response'}) {detail}")
         log("    Set it by hand instead: Setup > Named Credentials > External Credentials > GitHub API Credential >"
             " Principals > GitHub_PAT > Edit > Authentication Parameters > Token.")
         return False
@@ -237,13 +255,15 @@ class Bootstrap:
         else:
             log("\n3. No hub org_alias in the config: GitHub-only mode, no HUB_* secrets.")
 
-        if hub_alias and not self.a.skip_token and not self.a.dry_run:
-            log("\n4. GitHub token for the hub (lets the hub start workflows)")
-            log("   Fine-grained token on this repository: Actions RW, Contents RW, Pull requests RW, Metadata R, Workflows RW.")
+        if not self.a.skip_token and not self.a.dry_run:
+            log("\n4. GitHub token (the hub starts workflows with it; workflows open PRs and merge promotions with it)")
+            log("   Fine-grained token on this repository: Actions RW, Contents RW, Pull requests RW, Commit statuses RW,")
+            log("   Workflows RW, Metadata R.")
             token = getpass.getpass("   Paste the token (input hidden, Enter to skip): ").strip()
             if token:
-                self.store_named_credential(hub_alias, token)
-                if self.a.set_gh_pat:
+                if hub_alias:
+                    self.store_named_credential(hub_alias, token)
+                if not self.a.no_gh_pat:
                     self.set_secret(repo, "GH_PAT", token)
                 token = None
             else:
@@ -257,7 +277,9 @@ def main(argv):
     p.add_argument("--dry-run", action="store_true", help="show what would happen; read no secrets, set nothing")
     p.add_argument("--jwt", action="store_true", help="JWT mode (needs --consumer-keys)")
     p.add_argument("--consumer-keys", default="", help='JSON file {"<org alias>": "<consumer key>"}')
-    p.add_argument("--set-gh-pat", action="store_true", help="also store the GitHub token as the GH_PAT secret")
+    p.add_argument("--no-gh-pat", action="store_true", help="do not also store the GitHub token as the GH_PAT secret")
+    p.add_argument("--generate-jwt-cert", action="store_true",
+                   help="only create the JWT key pair in ~/.sfdevops/ (step 0 of --jwt: upload server.crt to the apps)")
     p.add_argument("--skip-token", action="store_true", help="do not ask for the GitHub token")
     p.add_argument("--skip-environments", action="store_true", help="do not create GitHub Environments")
     p.add_argument("--reviewer", default="", help="production reviewer (default: you)")
@@ -266,6 +288,11 @@ def main(argv):
     if a.jwt and not a.consumer_keys:
         p.error("--jwt needs --consumer-keys")
     try:
+        if a.generate_jwt_cert:
+            Bootstrap(a).jwt_key_b64()
+            log(f"Upload {os.path.join(KEY_DIR, 'server.crt')} to each org's Connected App or External Client App,")
+            log("collect the consumer keys in a JSON file, then run again with --jwt --consumer-keys <file>.")
+            return 0
         Bootstrap(a).go()
     except Fail as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)

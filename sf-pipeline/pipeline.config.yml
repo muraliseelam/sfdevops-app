@@ -49,8 +49,10 @@ source_orgs:
 # ---- Promotion chain -------------------------------------------------------
 # Order = promotion order. The FIRST entry is the pipeline entry point: feature
 # PRs target its branch and approval there starts the chain.
-# Each environment maps 1:1 to a GitHub Environment holding that org's secrets
-# (SF_CONSUMER_KEY / SF_USERNAME / SF_INSTANCE_URL / SF_JWT_KEY).
+# Each environment maps 1:1 to a GitHub Environment holding that org's secrets: either
+# SF_AUTH_URL (an SFDX auth URL; what bootstrap_secrets.py sets by default, and the only option
+# on orgs that refuse new Connected Apps) or the JWT set SF_CONSUMER_KEY / SF_USERNAME /
+# SF_JWT_KEY, plus SF_USERNAME / SF_INSTANCE_URL in both modes.
 environments:
   - name: int
     branch: int
@@ -82,10 +84,10 @@ production:
   destructive_tests: "PipelineCanaryTest"
 
 # ---- Hub org (the Salesforce app that records everything) -------------------
-# Workflows authenticate to the hub with the repository secrets HUB_CONSUMER_KEY /
-# HUB_USERNAME / HUB_INSTANCE_URL / HUB_JWT_KEY and POST their callbacks to
-# /services/apexrest/cdo/deploy-callback. If those secrets are absent, callbacks
-# are skipped with a notice and the pipeline still runs (GitHub-only mode).
+# Workflows authenticate to the hub with the repository secret HUB_AUTH_URL (or the JWT set
+# HUB_CONSUMER_KEY / HUB_USERNAME / HUB_JWT_KEY) and POST their callbacks to
+# /services/apexrest/cdo/deploy-callback. If neither is set, callbacks are skipped with a
+# notice and the pipeline still runs (GitHub-only mode).
 hub:
   org_alias: sfp-hub                    # local alias; setup scripts only
 

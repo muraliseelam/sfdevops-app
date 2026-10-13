@@ -1,7 +1,6 @@
 # Build plan — Salesforce DevOps Delivery Platform
 
-Source spec: `C:\Users\mural\Downloads\4AAA4A9C-A9CB-43A1-9D78-EAB0CED3606ESALESFORCE-DEVOPS-PLATFORM-BUILD-PROMPT.md`
-(the "master build prompt", §0–§17). This file is the working plan. It holds the decisions and
+Source spec: the "master build prompt" (§0–§17), kept outside this repository. This file is the working plan. It holds the decisions and
 the gates for each work session. Where it and the spec disagree, the decisions recorded here win.
 
 Planned 2026-10-12. Session 1 is scheduled for **2026-10-13 04:30 Central (CDT, UTC−5)**,
@@ -71,7 +70,7 @@ for values and local work.
 
 | # | Decision | Value | Status |
 | --- | --- | --- | --- |
-| D1 | Product naming (the spec is derived from a Cisco implementation; this repo is public on a personal account) | App `SF_DevOps` (label "SF DevOps"), source dir `sfdevops-app/`, branch `platform/sfdevops-app`. Keep the `CDO_` object prefix. No "Cisco" anywhere | APPROVED |
+| D1 | Product naming (this repository is public) | App `SF_DevOps` (label "SF DevOps"), source dir `sfdevops-app/`, branch `platform/sfdevops-app`. Keep the `CDO_` object prefix. No third-party or corporate branding anywhere | APPROVED |
 | D2 | Org mapping | source `dev` → `sfp-dev`. Chain `int` → `sfp-int`, `qa` → `sfp-qa`, `stage` → `sfp-stage`. Prod → `sfp-prod` | APPROVED |
 | D3 | Hub org | **Separate.** Create scratch org `sfp-hub` from DevHub `partner-pbo` (30 days) | APPROVED |
 | D4 | Metadata API version | `66.0` (as in the spec). Orgs accept it. Bump later by editing the config only | APPROVED |

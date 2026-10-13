@@ -100,6 +100,9 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     environment: ${{ needs.plan.outputs.validate_env }}
+    concurrency:
+      group: sf-deploy-${{ needs.plan.outputs.prod_branch }}
+      cancel-in-progress: false
     outputs:
       outcome: ${{ steps.deploy.outputs.outcome }}
       validated_id: ${{ steps.deploy.outputs.deploy_id }}
@@ -130,9 +133,9 @@ jobs:
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
           HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           RELEASE_ID: ${{ inputs.release_id }}
-          EVENT_TYPE: Release
+          EVENT_TYPE: Validation
           STATUS: Running
-          MESSAGE: Validating
+          MESSAGE: Validating against production
           CHECK_ONLY: "true"
           ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
           COMMIT_SHA: ${{ steps.src.outputs.sha }}
@@ -193,8 +196,8 @@ jobs:
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
           HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           RELEASE_ID: ${{ inputs.release_id }}
-          EVENT_TYPE: Release
-          STATUS: ${{ steps.deploy.outputs.outcome == 'success' && 'Running' || 'Failed' }}
+          EVENT_TYPE: Validation
+          STATUS: ${{ steps.deploy.outputs.outcome == 'success' && 'Success' || 'Failed' }}
           MESSAGE: ${{ steps.deploy.outputs.outcome == 'success' && 'Validated; waiting for the production reviewer' || 'Production validation failed' }}
           CHECK_ONLY: "true"
           ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
@@ -210,11 +213,29 @@ jobs:
     if: needs.validate.outputs.outcome == 'success'
     runs-on: ubuntu-latest
     environment: ${{ needs.plan.outputs.deploy_env }}
+    concurrency:
+      group: sf-deploy-${{ needs.plan.outputs.prod_branch }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Hub callback (releasing)
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EVENT_TYPE: Release
+          STATUS: Running
+          ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
+          MESSAGE: Approved; quick-deploying the validated payload
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
 
       - name: Rebuild the validated tree
         id: rebuild
@@ -310,14 +331,13 @@ jobs:
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
           HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           RELEASE_ID: ${{ inputs.release_id }}
-          EVENT_TYPE: ${{ steps.merge.outputs.merged == 'true' && 'Release' || 'QuickDeploy' }}
+          EVENT_TYPE: Release
           STATUS: ${{ steps.merge.outputs.merged == 'true' && 'Success' || 'Failed' }}
           ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
           COMMIT_SHA: ${{ steps.merge.outputs.merge_sha }}
           DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
           MESSAGE: ${{ steps.release.outputs.url || steps.merge.outputs.reason || 'Quick deploy did not succeed' }}
           PULL_REQUEST_URL: ${{ steps.release.outputs.url }}
-          PROMOTION_BRANCH: ${{ needs.plan.outputs.promotion_prefix }}${{ needs.plan.outputs.label }}-to-${{ needs.plan.outputs.prod_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
 

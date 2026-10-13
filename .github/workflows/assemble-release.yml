@@ -133,7 +133,7 @@ jobs:
               failed=1
             fi
             echo "::endgroup::"
-            RELEASE_ID="$rid" EVENT_TYPE=Release STATUS="$status" MESSAGE="$message ($branch)" \
+            RELEASE_ID="$rid" EVENT_TYPE=Merge STATUS="$status" MESSAGE="$message ($branch)" \
               CONFLICT_PATHS="$conflicts" COMMIT_SHA="$(git rev-parse HEAD)" PROMOTION_BRANCH="$branch" \
               bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy || true
           done < plan.tsv
