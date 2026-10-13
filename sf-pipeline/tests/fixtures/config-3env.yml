@@ -1,0 +1,22 @@
+# Test fixture: a three-environment chain. Must resolve with no code changes.
+source_path: force-app
+api_version: "66.0"
+baseline_branch: main
+delta_baseline: target
+source_orgs:
+  - name: dev
+environments:
+  - name: int
+    branch: int
+  - name: qa
+    branch: qa
+    test_level: RunLocalTests
+  - name: stage
+    branch: stage
+    gh_environment: staging-org
+production:
+  branch: main
+  deploy_environment: prod
+  validate_environment: prod-validate
+  destructive_tests: "PipelineCanaryTest"
+coverage_threshold: 85

@@ -1,0 +1,127 @@
+# ============================================================================
+#  Salesforce DevOps Pipeline — single source of truth
+# ============================================================================
+#
+# This is the ONLY file a new project edits. Every workflow resolves environment
+# names, branches, GitHub Environments and test levels from here through
+# `python3 sf-pipeline/scripts/plan.py`. Nothing else in .github/workflows/ or
+# sf-pipeline/ names an environment, a branch or an org count.
+#
+# The Salesforce hub keeps a mirror of the chain (CDO_Project__c, CDO_Stage__c,
+# CDO_Environment__c). Generate it FROM this file with
+# `python3 sf-pipeline/scripts/seed-pipeline.py` so the two can never drift.
+
+# ---- Project basics --------------------------------------------------------
+source_path: force-app        # Root of your Salesforce metadata (sfdx format)
+api_version: "66.0"           # Metadata API version used for the delta package
+node_version: "22"            # Node version for the CLI + LWC Jest
+
+# Production baseline. Used when delta_baseline == 'baseline'. Feature branches
+# are cut from here, so a feature always reflects production.
+baseline_branch: main
+
+# How the deployable delta is computed:
+#   baseline  — always diff against `baseline_branch` (every env gets the full
+#               change set relative to Prod). Simple, but a later env can
+#               receive components it already has.
+#   target    — Copado model. Cut a promotion branch from the TARGET env branch,
+#               merge the feature into it, and diff the promotion branch against
+#               the target. This is the correct default.
+delta_baseline: target
+
+# Branch naming patterns (prefixes only; the work item key is appended).
+branch_prefixes:
+  feature: "feature/"         # feature/WI-0032
+  promotion: "promotion/"     # promotion/WI-0032-to-qa
+
+# ---- Developer source orgs (where commits are retrieved FROM) --------------
+# A work item's Source_Org_Alias__c names one of these keys, and the commit
+# workflow runs in the matching GitHub Environment. Listing a new sandbox here
+# plus creating that GitHub Environment is the whole of "onboard a dev org".
+# org_alias is the local sf CLI alias; only the local setup scripts use it
+# (bootstrap-secrets.sh, onboard-org.sh). Workflows use the GitHub Environment.
+source_orgs:
+  - name: dev
+    gh_environment: dev
+    org_alias: sfp-dev
+    description: Shared developer org
+
+# ---- Promotion chain -------------------------------------------------------
+# Order = promotion order. The FIRST entry is the pipeline entry point: feature
+# PRs target its branch and approval there starts the chain.
+# Each environment maps 1:1 to a GitHub Environment holding that org's secrets
+# (SF_CONSUMER_KEY / SF_USERNAME / SF_INSTANCE_URL / SF_JWT_KEY).
+environments:
+  - name: int
+    branch: int
+    gh_environment: int
+    org_alias: sfp-int
+    test_level: RunSpecifiedTests   # optional; defaults to RunSpecifiedTests
+  - name: qa
+    branch: qa
+    gh_environment: qa
+    org_alias: sfp-qa
+  - name: stage
+    branch: stage
+    gh_environment: stage
+    org_alias: sfp-stage
+
+# ---- Production (isolated, manual, reviewer-gated) -------------------------
+production:
+  name: prod                            # logical name used in the hub and in logs
+  branch: main                          # branch that represents production
+  deploy_environment: prod              # GitHub Environment WITH required reviewers
+  validate_environment: prod-validate   # GitHub Environment WITHOUT reviewers
+  org_alias: sfp-prod
+  release_branch_prefix: "release/"
+  test_level: RunSpecifiedTests
+  # Production forbids NoTestRun whenever Apex is involved (INCLUDING deletions),
+  # so a destructive-only change must still run a test. A deletion has no
+  # coverage requirement, so one stable passing test satisfies the platform
+  # without running the whole (possibly red) org suite.
+  destructive_tests: "PipelineCanaryTest"
+
+# ---- Hub org (the Salesforce app that records everything) -------------------
+# Workflows authenticate to the hub with the repository secrets HUB_CONSUMER_KEY /
+# HUB_USERNAME / HUB_INSTANCE_URL / HUB_JWT_KEY and POST their callbacks to
+# /services/apexrest/cdo/deploy-callback. If those secrets are absent, callbacks
+# are skipped with a notice and the pipeline still runs (GitHub-only mode).
+hub:
+  org_alias: sfp-hub                    # local alias; setup scripts only
+
+# ---- Quality gates ---------------------------------------------------------
+# Each gate ONLY fires when the delta actually contains the relevant components:
+#   pmd           — Apex static analysis;  runs when *.cls / *.trigger change
+#   sonar         — SonarQube scan;        runs when Apex OR LWC/Aura JS change
+#                   (skipped with a warning while SONAR_TOKEN is not set)
+#   apex_coverage — coverage gate enforced during the org deploy, only when
+#                   *.cls / *.trigger change
+#   jest          — LWC Jest;              runs when an LWC bundle changes
+quality_gates:
+  pmd: true
+  sonar: true          # also needs SONAR_TOKEN / SONAR_HOST_URL secrets
+  apex_coverage: true
+  jest: true
+
+coverage_threshold: 85
+
+# ---- Deployment options ----------------------------------------------------
+# profiles_mode:
+#   full         deploy the COMPLETE profile/permission set from source. Safest
+#                when every referenced component already exists in the target.
+#   incremental  strip each profile/PS down to only the permission entries that
+#                reference components ALSO in this delta (field/object/class/tab/
+#                app/recordType permissions), keeping profile-level settings such
+#                as userPermissions. Avoids "component does not exist" failures
+#                on orgs that lag behind.
+profiles_mode: full
+
+# Labels. `approved` is the self-service approval path (admin-only on the entry
+# stage). The bypass label is honoured ONLY if the person who added it has
+# admin/maintain permission on the repo, re-verified at run time.
+approved_label: approved
+bypass_label: bypass-quality-gates
+
+# ---- Notifications ---------------------------------------------------------
+notifications:
+  webex: false         # needs WEBEX_BOT_TOKEN + WEBEX_ROOM_ID (or WEBEX_WEBHOOK_URL)

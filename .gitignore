@@ -1,0 +1,29 @@
+# Salesforce CLI state
+.sf/
+.sfdx/
+
+# Delta and deploy working directories
+.sgd/
+.sgd-*/
+deploy-result*.json
+manifest.md
+
+# Node / Python
+node_modules/
+coverage/
+__pycache__/
+*.pyc
+.venv/
+*.log
+
+# Secrets are never committed. bootstrap-secrets.sh keeps its key material in ~/.sfdevops/
+server.key
+server.key.b64
+*.key
+*.pem
+.sfdevops/
+
+# The hub app's own source lives on branch platform/sfdevops-app. It is ignored here so a
+# worktree checked out inside this folder can never leak into force-app deltas.
+/sfdevops-app/
+/.platform/

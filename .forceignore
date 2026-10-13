@@ -1,0 +1,12 @@
+# Files the delta and every deploy must never pick up.
+# sf-pipeline/scripts/delta.sh can blank this file for one run (force_ignore: false)
+# so that normally-ignored components are included on purpose.
+
+package.xml
+**/jsconfig.json
+**/.eslintrc.json
+**/__tests__/**
+**/*.dup
+**/.DS_Store
+.sf
+.sfdx

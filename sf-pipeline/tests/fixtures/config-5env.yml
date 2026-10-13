@@ -1,0 +1,31 @@
+# Test fixture: a five-environment chain with different branch names. Same code, no changes.
+source_path: src/salesforce
+api_version: "66.0"
+baseline_branch: release-main
+delta_baseline: baseline
+source_orgs:
+  - name: dev1
+    gh_environment: dev-one
+  - name: dev2
+environments:
+  - name: int
+    branch: env/int
+  - name: sit
+    branch: env/sit
+  - name: qa
+    branch: env/qa
+  - name: uat
+    branch: env/uat
+    test_level: RunLocalTests
+  - name: stage
+    branch: env/stage
+production:
+  name: production
+  branch: release-main
+  deploy_environment: production
+  validate_environment: production-validate
+  release_branch_prefix: "rel/"
+profiles_mode: incremental
+coverage_threshold: 80
+quality_gates:
+  sonar: false
