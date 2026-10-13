@@ -46,7 +46,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
 import plan as planlib  # noqa: E402
 
-REVISION = "rev 2026-10-13.3"
+REVISION = "rev 2026-10-13.4"
 EXT_CRED = "GitHub_API_Credential"
 PRINCIPAL = "GitHub_PAT"
 API = "v66.0"
@@ -82,9 +82,14 @@ def exe(name):
         local = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
         program_files = [os.environ.get("ProgramFiles", r"C:\Program Files"),
                          os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
+        # A CLI installed from inside a packaged (MSIX) Windows app, such as the Claude desktop
+        # app, lands in that app's private copy of AppData, which an ordinary terminal does not
+        # see at %APPDATA%; it is readable at its real path under %LOCALAPPDATA%\Packages.
+        import glob
+        packaged_npm = sorted(glob.glob(os.path.join(local, "Packages", "*", "LocalCache", "Roaming", "npm", "sf.cmd")))
         candidates = {
             "sf": [os.path.join(appdata, "npm", "sf.cmd"), os.path.join(home, "AppData", "Roaming", "npm", "sf.cmd")] +
-                  [os.path.join(pf, "sf", "bin", "sf.cmd") for pf in program_files],
+                  [os.path.join(pf, "sf", "bin", "sf.cmd") for pf in program_files] + packaged_npm,
             "gh": [os.path.join(pf, "GitHub CLI", "gh.exe") for pf in program_files] +
                   [os.path.join(local, "Programs", "GitHub CLI", "gh.exe")],
             "openssl": [os.path.join(pf, "Git", "usr", "bin", "openssl.exe") for pf in program_files],
