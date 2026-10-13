@@ -114,3 +114,37 @@ Then, for a delta containing only `ApexClass:InvoiceTotals`:
 
 `BillingScenarioTests` shares no name with `InvoiceTotals`; only the coverage map finds it. Not
 `RunLocalTests`, not the whole org.
+
+## ci-selftest on GitHub runners (ubuntu-latest)
+
+Run https://github.com/muraliseelam/sfdevops-app/actions/runs/38359797164: **success**.
+
+- unit: `Ran 100 tests ... OK` (Python); bash suites all `0 failed`: audit_append 11, auth_hub 72,
+  delta 59 (real sfdx-git-delta 6.45.1), hub_callback 53, install_sf 14, list_source_members 25,
+  sonar_gate 25, webex_notify 21; `All promotion simulation assertions passed`. CLI
+  `@salesforce/cli/2.153.5 linux-x64`.
+- lint: actionlint clean.
+- matrix: the same workflow expanded to **3** jobs for `config-3env.yml` (int, qa, stage) and
+  **5** jobs for `config-5env.yml` (int, sit, qa, uat, stage), with no file change.
+
+The first run (38359538112) failed only in the installer: it read the installed plugin version
+from the human-readable `sf plugins` table, which parsed to nothing on Linux. Fixed by reading
+`sf plugins --json` and allow-listing the unsigned plugin.
+
+## Hub app — full deploy, access, seed
+
+`tools/deploy-hub.sh sfp-hub --tests`: 10/10 steps Succeeded; Apex step **31 classes, 130/130
+tests**. API checks: `AppMenuItem SF_DevOps IsAccessible=true IsVisible=true`; 17 tabs; 6 Lightning
+pages; `CDO_Developer_Access = [CDO_User, CDO_Developer]`; CDO_User grants the app (TabSet),
+17 visible tabs and every controller a page loads (release/data writes check Release Manager
+object permissions). `grant-app-access.sh sfp-hub CDO_Admin_Access` → assigned.
+`seed-pipeline.py --org sfp-hub` → project 1, environments 5, stages 4, settings set, reconciler
+scheduled (4 jobs), `verified: hub matches pipeline.config.yml`.
+
+Trap hit: scheduled Apex blocks redeploying every class it references ("This schedulable class has
+jobs pending or in progress"). `deploy-hub.sh` now pauses the reconciler for the deploy and
+reschedules it (verified: 4 jobs scheduled after the redeploy).
+
+## Environment branches
+
+`int`, `qa`, `stage` created from `main` @ 99cc96493bc2 (protection deferred until the live runs pass).
