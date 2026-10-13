@@ -215,12 +215,12 @@ baseline you just retrieved from production). Otherwise skip production here.
 Two ways. Pick one.
 
 **A. Install the package (one command).** The hub is published as the unlocked package
-`SF DevOps` (no namespace). Version `0.1.0-1` is `04thm000002tWkTAAU` (94 % Apex coverage). It is
+`SF DevOps` (no namespace). Version `0.1.0-2` is `04thm000002tWm5AAE` (94 % Apex coverage). It is
 a beta version: it installs into sandboxes, Developer Edition and scratch orgs; a production org
 needs a released (promoted) version, which this page will list when there is one.
 
 ```bash
-sf package install --package 04thm000002tWkTAAU --target-org acme-hub --wait 30 --no-prompt
+sf package install --package 04thm000002tWm5AAE --target-org acme-hub --wait 30 --no-prompt
 ```
 
 **B. Deploy from source.** Clone the app's branch next to your repository and run the deploy

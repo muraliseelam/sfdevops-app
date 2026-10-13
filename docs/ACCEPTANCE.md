@@ -33,7 +33,7 @@ Status as of 2026-10-13 04:00 CDT.
 
 - The hub app deploys in order with **130/130 tests** (`tools/deploy-hub.sh sfp-hub --tests`), is
   seeded from the YAML (`seed-pipeline.py`: "hub matches pipeline.config.yml"), and installs as an
-  unlocked package (`04thm000002tWkTAAU`, 94 % coverage) into a fresh org in one command.
+  unlocked package (`04thm000002tWm5AAE`, 94 % coverage) into a fresh org in one command.
 - All five pipeline orgs were brought to the baseline (22 components, 7/7 tests each).
 - `ci-selftest` on GitHub runners: 100 Python tests, every bash suite, actionlint, all green
   ([38361283026](https://github.com/muraliseelam/sfdevops-app/actions/runs/38361283026)).

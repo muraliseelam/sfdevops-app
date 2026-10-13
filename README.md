@@ -90,7 +90,7 @@ Full instructions: **[docs/SETUP.md](docs/SETUP.md)**.
    production. Check it with `py sf-pipeline/scripts/plan.py outputs` (`python3` on macOS/Linux).
 3. Log in to every org: `sf org login web --alias <alias> --instance-url <url>`.
 4. Bring each org to the baseline: `bash sf-pipeline/scripts/onboard-org.sh <alias>`.
-5. Optional hub: `sf package install --package 04thm000002tWkTAAU --target-org <hub>` (or
+5. Optional hub: `sf package install --package 04thm000002tWm5AAE --target-org <hub>` (or
    `bash tools/deploy-hub.sh <hub>` from branch `platform/sfdevops-app`), then
    `bash sf-pipeline/scripts/grant-app-access.sh <hub> CDO_Admin_Access` and
    `py sf-pipeline/scripts/seed-pipeline.py`.

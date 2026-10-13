@@ -200,3 +200,18 @@ WI-0001 remain in the hub, labelled `[smoke]`.)
 - `CDO_WorkItemService.openPullRequest` now writes `Specified-Tests: <tests>` first in the PR
   body when the work item names tests, so the work item's explicit tests reach validation.
   Redeployed with 130/130 tests.
+
+## Hub page controllers against real data
+
+Anonymous Apex calling every read path the 6 pages use (PipelineController, the command center,
+StoryBoard, Promotion candidates, Git, Metadata, Quality, Release, Data, DeploymentStep, Dora,
+Governance, Integration, WorkItem) against the seeded hub with the two smoke work items:
+`SMOKE_OK 20`, `SMOKE_BAD 0`. `getPipeline` returns stage `int` (entry, gate Review) with both
+work items, its latest deployment (`Success`, coverage 92.5, `PRM-00001`), health `Healthy`, and
+empty `qa` / `stage` / `prod` stages.
+
+## Package version 0.1.0-2
+
+Rebuilt from the current hub source (Developer page access, release/data write guards,
+Specified-Tests in PR bodies): **0.1.0.2 = `04thm000002tWm5AAE`**, Apex coverage 94 %,
+`HasPassedCodeCoverageCheck: True`. README and SETUP now point at it. (0.1.0-1 remains installable.)
