@@ -256,3 +256,16 @@ If time or context runs out, stop at a clean commit and log exactly where Sessio
   open-source-ready result (§1b, D15). The in-session timer and keep-awake were blocked too.
   Waiting for the user to choose "start now" or "keep 04:30" (§6). `sfdevops-session-1` is
   enabled with its local-only prompt.
+- 2026-10-13 00:30–03:00 CDT, Session 1 (run live at the user's "start now"): **done** — config +
+  plan.py (23 tests); promotion algorithm (27-assertion git simulation); deploy/quality/report/
+  promote actions; all 17 spec workflows + ci-selftest + sf-auth-check (actionlint clean; CI green
+  on GitHub runners: 100 Python tests, 9 bash suites, 3-vs-5 matrix); sample Invoicing app on all
+  five orgs (7/7 tests each); live resolver against a real coverage map; hub app (22 objects,
+  31 classes, 13 LWCs, 6 pages, 17 tabs, 4 permission sets + groups) deployed with 130/130 tests,
+  seeded from the YAML, reconciler scheduled; inbound callback contract proven live (16 checks);
+  unlocked package 0.1.0-2 (`04thm000002tWm5AAE`, 94 %) installs in one command; docs complete;
+  GitHub Environments (prod with required reviewer) and env branches created. **Deviation:** new
+  Connected Apps are blocked in these orgs, so CI signs in with SFDX auth URLs by default.
+  **Blocked on the user:** `bootstrap_secrets.py` (org + hub secrets, GitHub token in the hub),
+  then the live runs in `docs/build-log/e2e-runbook.md`, then branch protection last. See
+  `docs/ACCEPTANCE.md`.
