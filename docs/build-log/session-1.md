@@ -30,3 +30,87 @@ Real config (`py sf-pipeline/scripts/plan.py outputs`), key lines:
     prod_validate_environment=prod-validate
     destructive_tests=PipelineCanaryTest
     protected_branches=main stage qa int
+
+## Phase 5 — promotion-branch algorithm (pure-git simulation)
+
+Command: `bash sf-pipeline/tests/test_promotion_sim.sh` → `All promotion simulation assertions passed` (27 assertions).
+
+| Case | Proven |
+| --- | --- |
+| 1. no clobber | target `qa` has `L1-qa`, feature has `L3-feat` in the same file → promotion payload contains **both**; the merge-base payload (the feature's own file) lacks `L1-qa`, i.e. it would have clobbered it; `delta(target_sha_at_cut..HEAD)` is exactly the changed file |
+| 2. conflict | a feature editing the same line exits 10, reports `conflict=true` + the conflicting path, emits an `::error::` annotation, leaves no `MERGE_HEAD` and a clean tree |
+| 3. target moved | another promotion lands on the target between cut and merge → merge refused (exit 11, `merged=false`, reason "moved"), target untouched |
+| 4. merge | target unchanged → merged by push; the target's tree equals the deployed tree; both `L1-qa` and `L3-feat` present; the other promotion's file kept |
+| 5. protected | a push rejected by branch protection (pre-receive hook printing GH006) fails with exit 12 in `push` mode and in `auto` mode without a PR path — never reported as success |
+| 6. rebuild | re-cutting from the recorded `CUT_SHA` + feature commit after the target moved again yields the identical tree hash |
+
+## Workflows — static checks
+
+`actionlint 1.7.12` over all 19 workflow files (17 from the spec + `ci-selftest` + `sf-auth-check`) and the local composite actions: no findings.
+
+Hardcoded-name scan (`grep -rnwE "int|qa|stage|...|main|sfp-..."` over `.github/workflows` and `sf-pipeline`, excluding the config and tests): only the spec-mandated filename `sf-int-deploy.yml` (contents generic) and `plan.py`'s schema default for `production.name`. The `ci-selftest` trigger's `branches: [main]` was removed.
+
+## Sample business metadata (`force-app`)
+
+- LWC Jest: `npx sfdx-lwc-jest -- --ci` → `Tests: 2 passed, 2 total`.
+- First onboarding attempt failed on every org: tests hit `No such column 'Status__c'` because the
+  sample code queries `WITH USER_MODE` and deploying a field grants nobody field access. Fixed by
+  running the tests as a test user holding `Invoice_User` (`InvoiceTestData` + `System.runAs`).
+- `onboard-org.sh` (full deploy + tests + coverage map), all **Succeeded, 22 components, 7/7 tests**:
+
+| Org | Deploy id |
+| --- | --- |
+| sfp-int | `0Afh1000000NxVdCAK` |
+| sfp-qa | `0Afdq00000EQDBFCA5` |
+| sfp-stage | `0AfjZ000000LDLdSAO` |
+| sfp-prod | `0Afhv000000QvxBCAS` |
+| sfp-dev | `0Afdq00000EQDG5CAP` |
+
+## Connected App probe
+
+Check-only deploy of a Connected App (throwaway cert, key deleted immediately, never uploaded) to
+`sfp-int` → `Error in SFDevOps_Probe - You can't create a connected app. To enable connected app
+creation, contact Salesforce Customer Support.` Consequence: CI sign-in defaults to SFDX auth URLs
+(`SF_AUTH_URL` / `HUB_AUTH_URL`); JWT remains supported for orgs that have a Connected App or an
+External Client App. Every org's CLI login has a shareable auth URL (checked as a boolean only;
+values never printed).
+
+## GitHub Environments
+
+Created via the REST API: `dev`, `int`, `qa`, `stage`, `prod-validate`, and `prod` with required
+reviewer `muraliseelam` (`prevent_self_review: false`).
+
+## Hub org
+
+`sfp-hub` created from DevHub `partner-pbo` (API 68.0, expires 2026-11-12). Metadata layer deployed
+by the hub-metadata agent: objects/fields `0Afcf00000Ch5f3CAB` (266 components: 22 objects, 222
+fields), credentials + custom permissions `0Afcf00000Ch5ojCAB`, object tabs `0Afcf00000Ch5rxCAB`,
+layouts `0Afcf00000Ch5wnCAB`.
+
+## Setup scripts (dry runs)
+
+- `bootstrap_secrets.py --dry-run`: resolves `muraliseelam/sfdevops-app`, plans the 6 GitHub
+  Environments (reviewer on `prod`), per-org secrets for sfp-dev/int/qa/stage/prod (prod org into
+  both prod environments) and the hub's repository secrets. No value read or printed.
+- `seed-pipeline.py --dry-run`: project `sfdevops-app`, 5 environments (dev source + int/qa/stage +
+  prod), 4 stages in chain order with gate types Review / Self_Service / Required_Reviewer.
+- `setup-branch-protection.sh --dry-run`: would create `stage`, `qa`, `int` from `main` and protect
+  `main`, `stage`, `qa` (enforce_admins) and `int` (entry, not enforced).
+
+## Test resolver, pass 1 against a live coverage map
+
+First attempt: `ApexCodeCoverage` had 0 rows and every `ApexCodeCoverageAggregate` row read
+0 lines covered: `sf apex run test` without `--code-coverage` asks the org to skip coverage.
+Fixed in `onboard-org.sh`; re-ran the test classes with `--code-coverage` on all five orgs
+(each: `Passed`, 7 tests, org-wide coverage 97 %).
+
+Then, for a delta containing only `ApexClass:InvoiceTotals`:
+
+    GITHUB_OUTPUT=out py sf-pipeline/scripts/specified_tests.py --package package.xml --source-path force-app --org sfp-int --cap 25
+    tests=BillingScenarioTests,InvoiceControllerTest
+    | `BillingScenarioTests` | coverage map (org sfp-int, up to 12 lines) | InvoiceTotals |
+    | `InvoiceControllerTest` | coverage map (org sfp-int, up to 11 lines) | InvoiceTotals |
+    Test level: RunSpecifiedTests
+
+`BillingScenarioTests` shares no name with `InvoiceTotals`; only the coverage map finds it. Not
+`RunLocalTests`, not the whole org.

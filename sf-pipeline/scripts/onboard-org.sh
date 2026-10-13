@@ -70,8 +70,11 @@ if status != "Succeeded":
 PY
 
 if [[ ${#tests[@]} -gt 0 ]]; then
+  # --code-coverage matters: without it the CLI asks the org to skip coverage, and the coverage
+  # map stays empty (every ApexCodeCoverageAggregate row reads 0 lines covered), which leaves
+  # pass 1 of specified_tests.py with nothing to read.
   echo "Running the tests once more as a test run so the org's coverage map is populated..."
-  sf apex run test --target-org "$alias" --class-names "$(IFS=,; echo "${tests[*]}")" --wait "$wait" --result-format human >/dev/null 2>&1 \
+  sf apex run test --target-org "$alias" --class-names "$(IFS=,; echo "${tests[*]}")" --code-coverage --wait "$wait" --result-format human >/dev/null 2>&1 \
     || echo "warning: the coverage-map test run reported a problem; the deploy itself succeeded."
 fi
 echo "Org ${alias} now matches ${ref:-the current checkout} under ${src}."
