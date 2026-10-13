@@ -109,7 +109,23 @@ step "5/10 layouts" --source-dir "$D/layouts"
 step "6/10 Lightning pages" --source-dir "$D/flexipages"
 step "7/10 tabs" --source-dir "$D/tabs"
 step "8/10 app" --source-dir "$D/applications"
+# A permission set inside a permission set group cannot be changed while the group recalculates
+# ("The ... permission set group is updating"), which it does for a while after every change.
+wait_groups() {
+  local n
+  for _ in $(seq 1 40); do
+    n="$(sf data query --target-org "$org" --json \
+      --query "SELECT COUNT() FROM PermissionSetGroup WHERE DeveloperName LIKE 'CDO\_%' AND Status != 'Updated'" 2>/dev/null \
+      | "$PY" -c "import json,sys; print((json.load(sys.stdin).get('result') or {}).get('totalSize', 0))" 2>/dev/null || echo 0)"
+    [[ "${n:-0}" == "0" ]] && return 0
+    echo "    waiting for ${n} permission set group(s) to finish recalculating..."
+    sleep 15
+  done
+  echo "    ! permission set groups still recalculating after 10 minutes; continuing"
+}
+wait_groups
 step "9/10 permission sets" --source-dir "$D/permissionsets"
+wait_groups
 step "10/10 permission set groups" --source-dir "$D/permissionsetgroups"
 echo "Hub app deployed to ${org}."
 echo "Next: sf-pipeline/scripts/grant-app-access.sh ${org} CDO_Admin_Access   (from the pipeline branch)"

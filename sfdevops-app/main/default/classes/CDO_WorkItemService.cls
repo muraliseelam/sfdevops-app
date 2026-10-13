@@ -110,6 +110,11 @@ public inherited sharing class CDO_WorkItemService {
             body.add('Acceptance criteria:\n' + wi.Acceptance_Criteria__c);
         }
         body.add('Work item: ' + wi.Name + ' (' + URL.getOrgDomainUrl().toExternalForm() + '/' + wi.Id + ')');
+        if (String.isNotBlank(wi.Specified_Tests__c)) {
+            // sf-pr-validation and sf-int-deploy read this line: tests named on the work item
+            // override automatic test resolution. First, so a long body never truncates it.
+            body.add(0, 'Specified-Tests: ' + wi.Specified_Tests__c);
+        }
         String text = String.join(body, '\n\n');
         dispatch(
             GitHubService.WF_OPEN_PR,
