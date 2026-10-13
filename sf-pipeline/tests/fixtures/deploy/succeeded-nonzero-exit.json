@@ -1,0 +1,198 @@
+{
+  "status": 1,
+  "name": "SfError",
+  "message": "Client lost the connection while polling deploy 0Afh1000000NuXmCAK. Check the deploy with: sf project deploy report --job-id 0Afh1000000NuXmCAK",
+  "exitCode": 1,
+  "result": {
+    "checkOnly": true,
+    "completedDate": "2026-10-13T05:52:49.000Z",
+    "createdBy": "005000000000001AAA",
+    "createdByName": "Integration User",
+    "createdDate": "2026-10-13T05:52:48.000Z",
+    "details": {
+      "componentSuccesses": [
+        {
+          "changed": true,
+          "componentType": "ApexClass",
+          "created": true,
+          "createdDate": "2026-10-13T05:52:49.000Z",
+          "deleted": false,
+          "fileName": "classes/SfpFixtureCalc.cls",
+          "fullName": "SfpFixtureCalc",
+          "id": "01ph1000001Sey1AAC",
+          "success": true
+        },
+        {
+          "changed": true,
+          "componentType": "ApexClass",
+          "created": true,
+          "createdDate": "2026-10-13T05:52:49.000Z",
+          "deleted": false,
+          "fileName": "classes/SfpFixtureCalcTest.cls",
+          "fullName": "SfpFixtureCalcTest",
+          "id": "01ph1000001Sey2AAC",
+          "success": true
+        },
+        {
+          "changed": true,
+          "componentType": "",
+          "created": false,
+          "createdDate": "2026-10-13T05:52:49.000Z",
+          "deleted": false,
+          "fileName": "package.xml",
+          "fullName": "package.xml",
+          "success": true
+        }
+      ],
+      "runTestResult": {
+        "codeCoverage": [
+          {
+            "id": "01ph1000001Sey1AAC",
+            "locationsCovered": [
+              {
+                "column": "0",
+                "line": "2",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "3",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "5",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "6",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "7",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "9",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "10",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "13",
+                "numExecutions": "0",
+                "time": "-1.0"
+              }
+            ],
+            "locationsNotCovered": [
+              {
+                "column": 0,
+                "line": 11,
+                "numExecutions": 0,
+                "time": -1
+              }
+            ],
+            "name": "SfpFixtureCalc",
+            "namespace": null,
+            "numLocations": 9,
+            "numLocationsNotCovered": 1,
+            "type": "Class",
+            "dmlInfo": [],
+            "methodInfo": [],
+            "soqlInfo": [],
+            "soslInfo": []
+          }
+        ],
+        "numFailures": 0,
+        "numTestsRun": 3,
+        "successes": [
+          {
+            "id": "01ph1000001Sey2AAC",
+            "methodName": "addsNumbers",
+            "name": "SfpFixtureCalcTest",
+            "namespace": null,
+            "time": 37
+          },
+          {
+            "id": "01ph1000001Sey2AAC",
+            "methodName": "doublesNumbers",
+            "name": "SfpFixtureCalcTest",
+            "namespace": null,
+            "time": 81
+          },
+          {
+            "id": "01ph1000001Sey2AAC",
+            "methodName": "labelsSmallNumbers",
+            "name": "SfpFixtureCalcTest",
+            "namespace": null,
+            "time": 81
+          }
+        ],
+        "totalTime": 240,
+        "codeCoverageWarnings": [],
+        "failures": [],
+        "flowCoverage": [],
+        "flowCoverageWarnings": []
+      },
+      "componentFailures": []
+    },
+    "done": true,
+    "id": "0Afh1000000NuXmCAK",
+    "ignoreWarnings": false,
+    "lastModifiedDate": "2026-10-13T05:52:49.000Z",
+    "numberComponentErrors": 0,
+    "numberComponentsDeployed": 2,
+    "numberComponentsTotal": 2,
+    "numberFiles": "6",
+    "numberTestErrors": 0,
+    "numberTestsCompleted": 3,
+    "numberTestsTotal": 3,
+    "rollbackOnError": true,
+    "runTestsEnabled": true,
+    "startDate": "2026-10-13T05:52:48.000Z",
+    "status": "Succeeded",
+    "success": true,
+    "files": [
+      {
+        "fullName": "SfpFixtureCalc",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalc.cls"
+      },
+      {
+        "fullName": "SfpFixtureCalc",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalc.cls-meta.xml"
+      },
+      {
+        "fullName": "SfpFixtureCalcTest",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalcTest.cls"
+      },
+      {
+        "fullName": "SfpFixtureCalcTest",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalcTest.cls-meta.xml"
+      }
+    ],
+    "deployUrl": "https://example.my.salesforce.com/lightning/setup/DeployStatus/page?address=%2Fchangemgmt%2FmonitorDeploymentsDetails.apexp%3FasyncId%3D0Afh1000000NuXmCAK"
+  },
+  "warnings": []
+}

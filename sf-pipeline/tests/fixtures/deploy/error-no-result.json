@@ -1,0 +1,11 @@
+{
+  "name": "NoOrgFound",
+  "message": "No authorization information found for int.",
+  "exitCode": 1,
+  "context": "DeployMetadata",
+  "commandName": "DeployMetadata",
+  "data": {},
+  "warnings": [],
+  "code": "1",
+  "status": 1
+}

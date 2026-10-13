@@ -1,0 +1,105 @@
+{
+  "status": 1,
+  "result": {
+    "checkOnly": true,
+    "completedDate": "2026-10-13T05:52:32.000Z",
+    "createdBy": "005000000000001AAA",
+    "createdByName": "Integration User",
+    "createdDate": "2026-10-13T05:52:32.000Z",
+    "details": {
+      "componentFailures": [
+        {
+          "changed": false,
+          "columnNumber": 20,
+          "componentType": "ApexClass",
+          "created": false,
+          "createdDate": "2026-10-13T05:52:32.000Z",
+          "deleted": false,
+          "fileName": "classes/SfpFixtureCalc.cls",
+          "fullName": "SfpFixtureCalc",
+          "lineNumber": 3,
+          "problem": "Variable does not exist: undefinedVar",
+          "problemType": "Error",
+          "success": false
+        },
+        {
+          "changed": false,
+          "columnNumber": 20,
+          "componentType": "ApexClass",
+          "created": false,
+          "createdDate": "2026-10-13T05:52:32.000Z",
+          "deleted": false,
+          "fileName": "classes/SfpFixtureCalcTest.cls",
+          "fullName": "SfpFixtureCalcTest",
+          "lineNumber": 3,
+          "problem": "Dependent class is invalid and needs recompilation:\n Class SfpFixtureCalc : Variable does not exist: undefinedVar",
+          "problemType": "Error",
+          "success": false
+        }
+      ],
+      "componentSuccesses": [
+        {
+          "changed": true,
+          "componentType": "",
+          "created": false,
+          "createdDate": "2026-10-13T05:52:32.000Z",
+          "deleted": false,
+          "fileName": "package.xml",
+          "fullName": "package.xml",
+          "success": true
+        }
+      ],
+      "runTestResult": {
+        "numFailures": 0,
+        "numTestsRun": 0,
+        "totalTime": 0,
+        "codeCoverage": [],
+        "codeCoverageWarnings": [],
+        "failures": [],
+        "flowCoverage": [],
+        "flowCoverageWarnings": [],
+        "successes": []
+      }
+    },
+    "done": true,
+    "id": "0Afh1000000NvbuCAC",
+    "ignoreWarnings": false,
+    "lastModifiedDate": "2026-10-13T05:52:32.000Z",
+    "numberComponentErrors": 2,
+    "numberComponentsDeployed": 0,
+    "numberComponentsTotal": 2,
+    "numberFiles": "6",
+    "numberTestErrors": 0,
+    "numberTestsCompleted": 0,
+    "numberTestsTotal": 0,
+    "rollbackOnError": true,
+    "runTestsEnabled": true,
+    "startDate": "2026-10-13T05:52:32.000Z",
+    "status": "Failed",
+    "success": false,
+    "files": [
+      {
+        "fullName": "SfpFixtureCalc",
+        "type": "ApexClass",
+        "state": "Failed",
+        "problemType": "Error",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalc.cls",
+        "lineNumber": 3,
+        "columnNumber": 20,
+        "error": "Variable does not exist: undefinedVar (3:20)"
+      },
+      {
+        "fullName": "SfpFixtureCalcTest",
+        "type": "ApexClass",
+        "state": "Failed",
+        "problemType": "Error",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalcTest.cls",
+        "lineNumber": 3,
+        "columnNumber": 20,
+        "error": "Dependent class is invalid and needs recompilation:\n Class SfpFixtureCalc : Variable does not exist: undefinedVar (3:20)"
+      }
+    ],
+    "deployUrl": "https://example.my.salesforce.com/lightning/setup/DeployStatus/page?address=%2Fchangemgmt%2FmonitorDeploymentsDetails.apexp%3FasyncId%3D0Afh1000000NvbuCAC"
+  },
+  "warnings": []
+}

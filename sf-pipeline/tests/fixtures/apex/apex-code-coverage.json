@@ -1,0 +1,17 @@
+{
+  "status": 0,
+  "result": {
+    "records": [
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "DataFactoryTest", "NamespacePrefix": null}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "Orphan"}, "TestMethodName": "buildsData", "NumLinesCovered": 30},
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "PkgInstallTest", "NamespacePrefix": "pkg"}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "Orphan"}, "TestMethodName": "installs", "NumLinesCovered": 25},
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "OrphanIntegrationSuite", "NamespacePrefix": null}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "Orphan"}, "TestMethodName": "endToEnd", "NumLinesCovered": 12},
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "OrphanIntegrationSuite", "NamespacePrefix": null}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "Orphan"}, "TestMethodName": "smoke", "NumLinesCovered": 4},
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "AccountServiceTest", "NamespacePrefix": null}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "AccountService"}, "TestMethodName": "counts", "NumLinesCovered": 40},
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "DataFactoryTest", "NamespacePrefix": null}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "AccountService"}, "TestMethodName": "buildsData", "NumLinesCovered": 5},
+      {"attributes": {"type": "ApexCodeCoverage"}, "ApexTestClass": {"attributes": {"type": "ApexClass"}, "Name": "UnrelatedTest", "NamespacePrefix": null}, "ApexClassOrTrigger": {"attributes": {"type": "Name"}, "Name": "SomethingElse"}, "TestMethodName": "other", "NumLinesCovered": 99}
+    ],
+    "totalSize": 7,
+    "done": true
+  },
+  "warnings": []
+}

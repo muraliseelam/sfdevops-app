@@ -1,0 +1,28 @@
+{
+  "status": 0,
+  "result": {
+    "checkOnly": false,
+    "done": true,
+    "id": "0Afh1000000NuZZCAK",
+    "details": {
+      "componentSuccesses": [],
+      "runTestResult": {
+        "numFailures": 0,
+        "numTestsRun": 0,
+        "totalTime": 0,
+        "codeCoverage": [],
+        "failures": [],
+        "successes": []
+      }
+    },
+    "numberComponentErrors": 0,
+    "numberComponentsDeployed": 2,
+    "numberComponentsTotal": 2,
+    "numberTestErrors": 0,
+    "numberTestsCompleted": 0,
+    "numberTestsTotal": 0,
+    "status": "Succeeded",
+    "success": true
+  },
+  "warnings": []
+}

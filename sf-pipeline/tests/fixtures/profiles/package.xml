@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>InvoiceService</members>
+        <name>ApexClass</name>
+    </types>
+    <types>
+        <members>InvoicePdf</members>
+        <name>ApexPage</name>
+    </types>
+    <types>
+        <members>Invoicing</members>
+        <name>CustomApplication</name>
+    </types>
+    <types>
+        <members>Account.Region__c</members>
+        <members>Invoice__c.Amount__c</members>
+        <name>CustomField</name>
+    </types>
+    <types>
+        <members>Invoice_Setting__mdt</members>
+        <members>Invoice__c</members>
+        <name>CustomObject</name>
+    </types>
+    <types>
+        <members>Approve_Invoices</members>
+        <name>CustomPermission</name>
+    </types>
+    <types>
+        <members>Invoice__c</members>
+        <name>CustomTab</name>
+    </types>
+    <types>
+        <members>Invoice_Approval</members>
+        <name>Flow</name>
+    </types>
+    <types>
+        <members>Invoice__c-Invoice Layout</members>
+        <name>Layout</name>
+    </types>
+    <types>
+        <members>Sales_Ops</members>
+        <name>PermissionSet</name>
+    </types>
+    <types>
+        <members>Admin</members>
+        <members>Custom: Marketing Profile</members>
+        <name>Profile</name>
+    </types>
+    <types>
+        <members>Invoice__c.Standard</members>
+        <name>RecordType</name>
+    </types>
+    <version>66.0</version>
+</Package>

@@ -1,0 +1,200 @@
+{
+  "status": 1,
+  "result": {
+    "checkOnly": true,
+    "completedDate": "2026-10-13T05:52:06.000Z",
+    "createdBy": "005000000000001AAA",
+    "createdByName": "Integration User",
+    "createdDate": "2026-10-13T05:52:04.000Z",
+    "details": {
+      "componentSuccesses": [
+        {
+          "changed": true,
+          "componentType": "ApexClass",
+          "created": true,
+          "createdDate": "2026-10-13T05:52:05.000Z",
+          "deleted": false,
+          "fileName": "classes/SfpFixtureCalc.cls",
+          "fullName": "SfpFixtureCalc",
+          "id": "01ph1000001SewPAAS",
+          "success": true
+        },
+        {
+          "changed": true,
+          "componentType": "ApexClass",
+          "created": true,
+          "createdDate": "2026-10-13T05:52:05.000Z",
+          "deleted": false,
+          "fileName": "classes/SfpFixtureCalcTest.cls",
+          "fullName": "SfpFixtureCalcTest",
+          "id": "01ph1000001SewQAAS",
+          "success": true
+        },
+        {
+          "changed": true,
+          "componentType": "",
+          "created": false,
+          "createdDate": "2026-10-13T05:52:05.000Z",
+          "deleted": false,
+          "fileName": "package.xml",
+          "fullName": "package.xml",
+          "success": true
+        }
+      ],
+      "runTestResult": {
+        "codeCoverage": [
+          {
+            "id": "01ph1000001SewPAAS",
+            "locationsCovered": [
+              {
+                "column": "0",
+                "line": "2",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "3",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "5",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "6",
+                "numExecutions": "0",
+                "time": "-1.0"
+              },
+              {
+                "column": "0",
+                "line": "7",
+                "numExecutions": "0",
+                "time": "-1.0"
+              }
+            ],
+            "locationsNotCovered": [
+              {
+                "column": 0,
+                "line": 9,
+                "numExecutions": 0,
+                "time": -1
+              },
+              {
+                "column": 0,
+                "line": 10,
+                "numExecutions": 0,
+                "time": -1
+              },
+              {
+                "column": 0,
+                "line": 11,
+                "numExecutions": 0,
+                "time": -1
+              },
+              {
+                "column": 0,
+                "line": 13,
+                "numExecutions": 0,
+                "time": -1
+              }
+            ],
+            "name": "SfpFixtureCalc",
+            "namespace": null,
+            "numLocations": 9,
+            "numLocationsNotCovered": 4,
+            "type": "Class",
+            "dmlInfo": [],
+            "methodInfo": [],
+            "soqlInfo": [],
+            "soslInfo": []
+          }
+        ],
+        "codeCoverageWarnings": [
+          {
+            "id": "01ph1000001SewP",
+            "message": "Test coverage of selected Apex Class is 55.556%, at least 75% test coverage is required",
+            "name": "SfpFixtureCalc",
+            "namespace": null
+          }
+        ],
+        "failures": [
+          {
+            "id": "01ph1000001SewQAAS",
+            "message": "System.AssertException: Assertion Failed: twice(2) should be 4: Expected: 5, Actual: 4",
+            "methodName": "doublesNumbers",
+            "name": "SfpFixtureCalcTest",
+            "namespace": null,
+            "packageName": "SfpFixtureCalcTest",
+            "stackTrace": "Class.SfpFixtureCalcTest.doublesNumbers: line 9, column 1",
+            "time": 80,
+            "type": "Class"
+          }
+        ],
+        "numFailures": 1,
+        "numTestsRun": 2,
+        "successes": [
+          {
+            "id": "01ph1000001SewQAAS",
+            "methodName": "addsNumbers",
+            "name": "SfpFixtureCalcTest",
+            "namespace": null,
+            "time": 37
+          }
+        ],
+        "totalTime": 151,
+        "flowCoverage": [],
+        "flowCoverageWarnings": []
+      },
+      "componentFailures": []
+    },
+    "done": true,
+    "id": "0Afh1000000NwRVCA0",
+    "ignoreWarnings": false,
+    "lastModifiedDate": "2026-10-13T05:52:06.000Z",
+    "numberComponentErrors": 0,
+    "numberComponentsDeployed": 2,
+    "numberComponentsTotal": 2,
+    "numberFiles": "6",
+    "numberTestErrors": 1,
+    "numberTestsCompleted": 1,
+    "numberTestsTotal": 2,
+    "rollbackOnError": true,
+    "runTestsEnabled": true,
+    "startDate": "2026-10-13T05:52:05.000Z",
+    "status": "Failed",
+    "success": false,
+    "files": [
+      {
+        "fullName": "SfpFixtureCalc",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalc.cls"
+      },
+      {
+        "fullName": "SfpFixtureCalc",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalc.cls-meta.xml"
+      },
+      {
+        "fullName": "SfpFixtureCalcTest",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalcTest.cls"
+      },
+      {
+        "fullName": "SfpFixtureCalcTest",
+        "type": "ApexClass",
+        "state": "Created",
+        "filePath": "force-app/main/default/classes/SfpFixtureCalcTest.cls-meta.xml"
+      }
+    ],
+    "deployUrl": "https://example.my.salesforce.com/lightning/setup/DeployStatus/page?address=%2Fchangemgmt%2FmonitorDeploymentsDetails.apexp%3FasyncId%3D0Afh1000000NwRVCA0"
+  },
+  "warnings": []
+}
