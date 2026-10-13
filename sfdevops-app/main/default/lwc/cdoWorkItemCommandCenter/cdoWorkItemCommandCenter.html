@@ -1,0 +1,214 @@
+<template>
+    <lightning-card title={title} icon-name="standard:work_order">
+        <div slot="actions">
+            <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh" title="Refresh" onclick={handleRefresh}></lightning-button-icon>
+        </div>
+        <div class="slds-card__body_inner">
+            <template lwc:if={hasRecord}>
+                <template lwc:if={isLoading}>
+                    <div class="slds-is-relative slds-p-around_large">
+                        <lightning-spinner alternative-text="Loading the work item" size="small"></lightning-spinner>
+                    </div>
+                </template>
+                <template lwc:elseif={error}>
+                    <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                        <span class="slds-assistive-text">Error</span>
+                        <h2>Could not load the work item: {error}</h2>
+                    </div>
+                </template>
+                <template lwc:else>
+                    <!-- Warnings -->
+                    <template lwc:if={dispatchWarning}>
+                        <div class="slds-notify slds-notify_alert slds-alert_warning slds-m-bottom_small" role="alert">
+                            <span class="slds-assistive-text">Warning</span>
+                            <h2>{dispatchWarning}</h2>
+                        </div>
+                    </template>
+                    <template lwc:if={isBlocked}>
+                        <div class="slds-notify slds-notify_alert slds-alert_error slds-m-bottom_small" role="alert">
+                            <span class="slds-assistive-text">Blocked</span>
+                            <h2>Blocked: {wi.Blocked_Reason__c}</h2>
+                        </div>
+                    </template>
+                    <template lwc:if={hasConflicts}>
+                        <div class="slds-box slds-box_x-small slds-theme_shade slds-m-bottom_small" role="region" aria-label="Conflicting paths">
+                            <p class="slds-text-title_bold">Conflicting paths</p>
+                            <ul class="slds-list_dotted">
+                                <template for:each={conflictPaths} for:item="path">
+                                    <li key={path} class="slds-text-body_small">{path}</li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+
+                    <!-- Stage path -->
+                    <template lwc:if={hasPath}>
+                        <lightning-progress-indicator type="path" variant="base" current-step={currentStep}>
+                            <template for:each={pathSteps} for:item="step">
+                                <lightning-progress-step key={step.value} label={step.label} value={step.value}></lightning-progress-step>
+                            </template>
+                        </lightning-progress-indicator>
+                        <p class="slds-text-body_small slds-text-color_weak slds-m-top_xx-small">{pathSummary}</p>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-color_weak">No stages configured yet — run seed-pipeline.py.</p>
+                    </template>
+
+                    <!-- Status badges -->
+                    <div class="slds-m-top_small" aria-label="Status">
+                        <template for:each={badges} for:item="b">
+                            <span key={b.key} class={b.className} title={b.label}>{b.text}</span>
+                        </template>
+                    </div>
+
+                    <!-- Facts -->
+                    <div class="slds-grid slds-wrap slds-gutters_small slds-m-top_small">
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                            <p class="slds-text-title">Coverage</p>
+                            <p class="slds-text-heading_small">{coverageLabel}
+                                <span class="slds-text-body_small slds-text-color_weak slds-m-left_xx-small">{minimumLabel}</span>
+                            </p>
+                            <template lwc:if={hasCoverage}>
+                                <lightning-progress-bar value={coverageValue} size="small"
+                                    aria-label="Last measured coverage"></lightning-progress-bar>
+                            </template>
+                            <template lwc:if={coverageBelow}>
+                                <p class="slds-text-body_small slds-text-color_error">Below the minimum: promotions are held.</p>
+                            </template>
+                        </div>
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                            <p class="slds-text-title">{prLabel}</p>
+                            <template lwc:if={wi.Pull_Request_URL__c}>
+                                <a href={wi.Pull_Request_URL__c} target="_blank" rel="noopener noreferrer">
+                                    Open on GitHub<span class="slds-assistive-text"> (opens a new tab)</span>
+                                </a>
+                                <span class={prApprovedClass}>{prApprovedLabel}</span>
+                            </template>
+                            <template lwc:else>
+                                <p class="slds-text-body_small slds-text-color_weak">Not opened yet</p>
+                            </template>
+                        </div>
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                            <p class="slds-text-title">Feature branch</p>
+                            <template lwc:if={branchUrl}>
+                                <a href={branchUrl} target="_blank" rel="noopener noreferrer" class="slds-truncate">{state.featureBranch}</a>
+                            </template>
+                            <template lwc:else>
+                                <p class="slds-text-body_small">{state.featureBranch}</p>
+                            </template>
+                            <p class="slds-text-body_small slds-text-color_weak">{componentCount} components tracked</p>
+                            <template lwc:if={lastRunUrl}>
+                                <a href={lastRunUrl} target="_blank" rel="noopener noreferrer" class="slds-text-body_small">Last workflow run</a>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Action bar -->
+                    <div class="slds-m-top_medium">
+                        <div class="action-bar" role="group" aria-label="Work item actions">
+                            <template for:each={actions} for:item="a">
+                                <lightning-button
+                                    key={a.name}
+                                    label={a.label}
+                                    icon-name={a.icon}
+                                    variant={a.variant}
+                                    title={a.title}
+                                    data-action={a.name}
+                                    disabled={a.disabled}
+                                    onclick={handleAction}
+                                    class="slds-m-right_x-small slds-m-bottom_x-small"
+                                ></lightning-button>
+                            </template>
+                        </div>
+                        <template lwc:if={openPromotion}>
+                            <div class="slds-grid slds-grid_vertical-align-center slds-wrap slds-m-top_x-small">
+                                <span class="slds-m-right_x-small">Open promotion:</span>
+                                <a href={openPromotion.url} data-id={openPromotion.id} data-object="CDO_Promotion__c" onclick={handleNavigate}
+                                    class="slds-m-right_x-small">{openPromotion.name}</a>
+                                <span class={openPromotion.statusClass}>{openPromotion.statusLabel}</span>
+                                <template lwc:if={openPromotion.isDraft}>
+                                    <lightning-button class="slds-m-left_small" variant="brand-outline" label={openPromotion.deployLabel}
+                                        onclick={handleDeployDraft} disabled={deployDraftDisabled}></lightning-button>
+                                </template>
+                            </div>
+                        </template>
+                        <template lwc:if={hasUnavailable}>
+                            <details class="slds-m-top_x-small">
+                                <summary class="slds-text-body_small slds-text-link">Why some actions are unavailable</summary>
+                                <ul class="slds-list_dotted slds-m-top_xx-small">
+                                    <template for:each={unavailableReasons} for:item="r">
+                                        <li key={r.key} class="slds-text-body_small">{r.text}</li>
+                                    </template>
+                                </ul>
+                            </details>
+                        </template>
+                    </div>
+
+                    <!-- Timeline -->
+                    <h3 class="slds-text-heading_small slds-m-top_medium slds-m-bottom_x-small">Activity</h3>
+                    <template lwc:if={hasTimeline}>
+                        <ul class="timeline" aria-label="Commits, promotions, deployments and approvals, newest first">
+                            <template for:each={timeline} for:item="item">
+                                <li key={item.key} class="timeline__item slds-media slds-m-bottom_small">
+                                    <div class="slds-media__figure">
+                                        <lightning-icon icon-name={item.icon} size="x-small" alternative-text={item.kind}></lightning-icon>
+                                    </div>
+                                    <div class="slds-media__body">
+                                        <div class="slds-grid slds-grid_align-spread slds-wrap">
+                                            <p>
+                                                <span class="slds-text-title slds-m-right_x-small">{item.kind}</span>
+                                                <a href={item.url}>{item.title}</a>
+                                                <template lwc:if={item.hasStatus}>
+                                                    <span class={item.statusClass}>{item.statusLabel}</span>
+                                                </template>
+                                            </p>
+                                            <span class="slds-text-body_small slds-text-color_weak" title={item.whenTitle}>{item.whenLabel}</span>
+                                        </div>
+                                        <template lwc:if={item.detail}>
+                                            <p class="slds-text-body_small slds-text-color_weak">{item.detail}</p>
+                                        </template>
+                                        <template lwc:if={item.runUrl}>
+                                            <a href={item.runUrl} target="_blank" rel="noopener noreferrer" class="slds-text-body_small">
+                                                Open on GitHub<span class="slds-assistive-text"> (opens a new tab)</span>
+                                            </a>
+                                        </template>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-color_weak">No activity yet. Commit changes to get started.</p>
+                    </template>
+                </template>
+                <template lwc:if={working}>
+                    <lightning-spinner alternative-text="Working" size="small"></lightning-spinner>
+                </template>
+            </template>
+            <template lwc:else>
+                <p class="slds-text-color_weak">Place this component on a Work Item record page.</p>
+            </template>
+        </div>
+    </lightning-card>
+
+    <template lwc:if={showCommit}>
+        <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="commit-modal-heading"
+            class="slds-modal slds-fade-in-open slds-modal_large" onkeydown={handleModalKeydown}>
+            <div class="slds-modal__container">
+                <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" title="Close" onclick={handleCloseCommit}>
+                    <lightning-icon icon-name="utility:close" size="small" variant="inverse" alternative-text="Close"></lightning-icon>
+                </button>
+                <div class="slds-modal__header">
+                    <h1 id="commit-modal-heading" class="slds-modal__title">Commit changes</h1>
+                </div>
+                <div class="slds-modal__content slds-p-around_medium">
+                    <c-cdo-commit record-id={recordId}></c-cdo-commit>
+                </div>
+                <div class="slds-modal__footer">
+                    <button class="slds-button slds-button_neutral" onclick={handleCloseCommit}>Close</button>
+                </div>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open" role="presentation"></div>
+    </template>
+</template>

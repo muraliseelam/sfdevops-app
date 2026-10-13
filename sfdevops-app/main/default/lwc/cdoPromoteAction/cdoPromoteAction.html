@@ -1,0 +1,40 @@
+<template>
+    <lightning-quick-action-panel header="Promote to next stage">
+        <template lwc:if={isLoading}>
+            <div class="slds-is-relative slds-p-around_large">
+                <lightning-spinner alternative-text="Loading" size="small"></lightning-spinner>
+            </div>
+        </template>
+        <template lwc:elseif={blockedReason}>
+            <div class="slds-notify slds-notify_alert slds-alert_warning" role="alert">
+                <span class="slds-assistive-text">Warning</span>
+                <h2>{blockedReason}</h2>
+            </div>
+        </template>
+        <template lwc:else>
+            <p class="slds-text-body_regular">
+                Create a Draft promotion to the next stage. It is not deployed until someone deploys or approves it.
+            </p>
+            <dl class="slds-dl_horizontal slds-m-top_small">
+                <dt class="slds-dl_horizontal__label">Work item</dt>
+                <dd class="slds-dl_horizontal__detail">{preview.workItemName}: {preview.subject}</dd>
+                <dt class="slds-dl_horizontal__label">From</dt>
+                <dd class="slds-dl_horizontal__detail">{fromLabel}</dd>
+                <dt class="slds-dl_horizontal__label">To</dt>
+                <dd class="slds-dl_horizontal__detail">{preview.nextStageName}</dd>
+            </dl>
+            <template lwc:if={preview.isProduction}>
+                <p class="slds-text-body_small slds-text-color_weak slds-m-top_small">
+                    The target is production. The deploy waits for the required reviewer in GitHub.
+                </p>
+            </template>
+        </template>
+        <template lwc:if={working}>
+            <lightning-spinner alternative-text="Promoting" size="small"></lightning-spinner>
+        </template>
+        <div slot="footer">
+            <lightning-button label="Cancel" onclick={close}></lightning-button>
+            <lightning-button variant="brand" label="Promote" onclick={handlePromote} disabled={disabled} class="slds-m-left_x-small"></lightning-button>
+        </div>
+    </lightning-quick-action-panel>
+</template>

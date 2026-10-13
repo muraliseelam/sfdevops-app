@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSetGroup xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Release manager role: assemble releases, approve the entry stage, run production releases and data deploys. CDO_User + CDO_Developer + CDO_Release_Manager.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SF DevOps Release Manager Access</label>
+    <permissionSets>CDO_User</permissionSets>
+    <permissionSets>CDO_Developer</permissionSets>
+    <permissionSets>CDO_Release_Manager</permissionSets>
+    <status>Updated</status>
+</PermissionSetGroup>

@@ -1,0 +1,9 @@
+.changes-table {
+    max-height: 28rem;
+    overflow-y: auto;
+}
+
+.spinner-inline {
+    width: 1.5rem;
+    height: 1.5rem;
+}

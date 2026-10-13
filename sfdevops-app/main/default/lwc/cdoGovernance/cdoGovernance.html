@@ -1,0 +1,214 @@
+<template>
+    <lightning-card title="Governance" icon-name="standard:entitlement_policy">
+        <div slot="actions">
+            <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh" title="Refresh" onclick={handleRefresh}></lightning-button-icon>
+        </div>
+        <div class="slds-card__body_inner">
+            <lightning-tabset>
+                <!-- Audit log -->
+                <lightning-tab label="Audit log">
+                    <div class="slds-grid slds-wrap slds-gutters_small slds-grid_vertical-align-end slds-m-bottom_small">
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                            <lightning-combobox label="Event type" value={eventType} options={eventTypeOptions}
+                                onchange={handleEventTypeChange}></lightning-combobox>
+                        </div>
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                            <lightning-record-picker
+                                label="Work item"
+                                placeholder="Any work item"
+                                object-api-name="CDO_Work_Item__c"
+                                value={workItemFilter}
+                                display-info={workItemDisplayInfo}
+                                matching-info={workItemMatchingInfo}
+                                onchange={handleWorkItemFilterChange}
+                            ></lightning-record-picker>
+                        </div>
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                            <lightning-combobox label="Show" value={limitSize} options={limitOptions} onchange={handleLimitChange}></lightning-combobox>
+                        </div>
+                    </div>
+                    <template lwc:if={auditError}>
+                        <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                            <span class="slds-assistive-text">Error</span>
+                            <h2>Could not load the audit log: {auditError}</h2>
+                        </div>
+                    </template>
+                    <template lwc:elseif={hasEvents}>
+                        <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small" aria-live="polite">{auditCountLabel}</p>
+                        <div class="audit-table">
+                            <lightning-datatable key-field="Id" data={auditRows} columns={auditColumns} hide-checkbox-column
+                                onrowaction={handleAuditRowAction} aria-label="Audit events, newest first"></lightning-datatable>
+                        </div>
+                        <template lwc:if={selectedEvent}>
+                            <section class="slds-box slds-m-top_small" aria-label="Audit event details">
+                                <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center">
+                                    <h3 class="slds-text-heading_small">{selectedEvent.Name}: {selectedEvent.Summary__c}</h3>
+                                    <lightning-button-icon icon-name="utility:close" alternative-text="Close details" title="Close details"
+                                        onclick={handleCloseDetails} variant="bare"></lightning-button-icon>
+                                </div>
+                                <p class="slds-text-body_small slds-text-color_weak">
+                                    {selectedEvent.Event_Type__c} · {selectedEventWhen} · {selectedEvent.Actor__c} · {selectedEvent.Source__c}
+                                </p>
+                                <template lwc:if={selectedEvent.Details__c}>
+                                    <pre class="event-details slds-m-top_x-small">{selectedEvent.Details__c}</pre>
+                                </template>
+                                <template lwc:else>
+                                    <p class="slds-m-top_x-small slds-text-color_weak">No details recorded.</p>
+                                </template>
+                            </section>
+                        </template>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-color_weak">No audit events match the filters.</p>
+                    </template>
+                </lightning-tab>
+
+                <!-- Pending promotions -->
+                <lightning-tab label={pendingTabLabel}>
+                    <template lwc:if={pendingError}>
+                        <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                            <span class="slds-assistive-text">Error</span>
+                            <h2>Could not load pending promotions: {pendingError}</h2>
+                        </div>
+                    </template>
+                    <template lwc:elseif={hasPending}>
+                        <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">
+                            Draft promotions waiting for a decision. Approving one queues its deployment.
+                        </p>
+                        <lightning-datatable key-field="id" data={pendingRows} columns={pendingColumns} hide-checkbox-column
+                            onrowaction={handlePendingRowAction} aria-label="Promotions waiting for approval"></lightning-datatable>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-color_weak">No promotions are waiting for approval.</p>
+                    </template>
+                </lightning-tab>
+
+                <!-- Governance operations -->
+                <template lwc:if={canRunOps}>
+                    <lightning-tab label="Operations">
+                        <div class="slds-grid slds-wrap slds-gutters_small">
+                            <section class="slds-col slds-size_1-of-1 slds-large-size_1-of-2 slds-m-bottom_medium" aria-labelledby="op-rollback">
+                                <div class="slds-box">
+                                    <h3 id="op-rollback" class="slds-text-heading_small">Roll back an environment</h3>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">Redeploy an environment at an earlier commit.</p>
+                                    <lightning-combobox label="Environment" data-field="rollbackEnv" value={rollbackEnv} options={envOptions}
+                                        onchange={handleOpsField} required></lightning-combobox>
+                                    <lightning-input label="Commit SHA" data-field="rollbackSha" value={rollbackSha} onchange={handleOpsField}
+                                        pattern={shaPattern} message-when-pattern-mismatch="Enter 7 to 40 hexadecimal characters."
+                                        required></lightning-input>
+                                    <lightning-textarea label="Reason" data-field="rollbackReason" value={rollbackReason} onchange={handleOpsField}
+                                        required></lightning-textarea>
+                                    <lightning-button class="slds-m-top_x-small" variant="destructive" label="Roll back" onclick={handleRollback}
+                                        disabled={rollbackDisabled}></lightning-button>
+                                </div>
+                            </section>
+                            <section class="slds-col slds-size_1-of-1 slds-large-size_1-of-2 slds-m-bottom_medium" aria-labelledby="op-redeploy">
+                                <div class="slds-box">
+                                    <h3 id="op-redeploy" class="slds-text-heading_small">Redeploy a feature</h3>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">Deploy a work item's feature branch to an environment again.</p>
+                                    <lightning-record-picker label="Work item" object-api-name="CDO_Work_Item__c" data-field="redeployWorkItemId"
+                                        display-info={workItemDisplayInfo} matching-info={workItemMatchingInfo}
+                                        onchange={handleOpsRecord} required></lightning-record-picker>
+                                    <lightning-combobox label="Environment" data-field="redeployEnv" value={redeployEnv} options={envOptions}
+                                        onchange={handleOpsField} required></lightning-combobox>
+                                    <lightning-button class="slds-m-top_x-small" label="Redeploy" onclick={handleRedeploy}
+                                        disabled={redeployDisabled}></lightning-button>
+                                </div>
+                            </section>
+                            <section class="slds-col slds-size_1-of-1 slds-large-size_1-of-2 slds-m-bottom_medium" aria-labelledby="op-recreate">
+                                <div class="slds-box">
+                                    <h3 id="op-recreate" class="slds-text-heading_small">Recreate a feature branch</h3>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">Rebuild the branch from the baseline with the work item's tracked components.</p>
+                                    <lightning-record-picker label="Work item" object-api-name="CDO_Work_Item__c" data-field="recreateWorkItemId"
+                                        display-info={workItemDisplayInfo} matching-info={workItemMatchingInfo}
+                                        onchange={handleOpsRecord} required></lightning-record-picker>
+                                    <lightning-button class="slds-m-top_x-small" label="Recreate" onclick={handleRecreate}
+                                        disabled={recreateDisabled}></lightning-button>
+                                </div>
+                            </section>
+                            <section class="slds-col slds-size_1-of-1 slds-large-size_1-of-2 slds-m-bottom_medium" aria-labelledby="op-sync">
+                                <div class="slds-box">
+                                    <h3 id="op-sync" class="slds-text-heading_small">Sync environment branches</h3>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">Re-align branches with what is deployed.</p>
+                                    <lightning-combobox label="Environment" data-field="syncEnv" value={syncEnv} options={syncEnvOptions}
+                                        onchange={handleOpsField}></lightning-combobox>
+                                    <lightning-button class="slds-m-top_x-small" label="Sync" onclick={handleSync} disabled={working}></lightning-button>
+                                </div>
+                            </section>
+                            <section class="slds-col slds-size_1-of-1 slds-m-bottom_medium" aria-labelledby="op-conflict">
+                                <div class="slds-box">
+                                    <h3 id="op-conflict" class="slds-text-heading_small">Conflict check</h3>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">
+                                        Join every in-flight work item on its components and flag overlaps before a promotion merge hits them.
+                                    </p>
+                                    <lightning-button label="Run conflict check" onclick={handleConflictCheck} disabled={working}></lightning-button>
+                                </div>
+                            </section>
+                        </div>
+                    </lightning-tab>
+                </template>
+
+                <!-- Integration health -->
+                <lightning-tab label="Integration" onactive={handleHealthTab}>
+                    <template lwc:if={healthLoading}>
+                        <div class="slds-is-relative slds-p-around_large">
+                            <lightning-spinner alternative-text="Checking the GitHub integration" size="small"></lightning-spinner>
+                        </div>
+                    </template>
+                    <template lwc:if={healthError}>
+                        <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                            <span class="slds-assistive-text">Error</span>
+                            <h2>Could not check the integration: {healthError}</h2>
+                        </div>
+                    </template>
+                    <template lwc:if={health}>
+                        <ul class="slds-has-dividers_bottom-space">
+                            <template for:each={healthItems} for:item="item">
+                                <li key={item.key} class="slds-item slds-grid slds-grid_vertical-align-start">
+                                    <lightning-icon icon-name={item.iconName} variant={item.iconVariant} size="x-small"
+                                        alternative-text={item.iconText} class="slds-m-right_small slds-m-top_xxx-small"></lightning-icon>
+                                    <div>
+                                        <p class="slds-text-heading_small">{item.label}</p>
+                                        <p class="slds-text-body_small">{item.detail}</p>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+                    <div class="slds-m-top_small">
+                        <lightning-button label="Test GitHub connection" icon-name="utility:connected_apps" onclick={handleTestConnection}
+                            disabled={healthLoading}></lightning-button>
+                    </div>
+                </lightning-tab>
+            </lightning-tabset>
+            <template lwc:if={working}>
+                <lightning-spinner alternative-text="Working" size="small"></lightning-spinner>
+            </template>
+        </div>
+    </lightning-card>
+
+    <template lwc:if={isDeciding}>
+        <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="decision-heading"
+            class="slds-modal slds-fade-in-open" onkeydown={handleModalKeydown}>
+            <div class="slds-modal__container">
+                <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" title="Close" onclick={handleCloseDecision}>
+                    <lightning-icon icon-name="utility:close" size="small" variant="inverse" alternative-text="Close"></lightning-icon>
+                </button>
+                <div class="slds-modal__header">
+                    <h1 id="decision-heading" class="slds-modal__title">{decisionTitle}</h1>
+                </div>
+                <div class="slds-modal__content slds-p-around_medium">
+                    <p class="slds-m-bottom_small">{decisionHelp}</p>
+                    <lightning-textarea class="decision-comments" label="Comments" value={decision.comments}
+                        onchange={handleCommentsChange} required={decisionIsReject}
+                        message-when-value-missing="Explain why the promotion is rejected."></lightning-textarea>
+                </div>
+                <div class="slds-modal__footer">
+                    <button class="slds-button slds-button_neutral" onclick={handleCloseDecision}>Cancel</button>
+                    <button class={decisionButtonClass} onclick={handleSubmitDecision} disabled={working}>{decisionButtonLabel}</button>
+                </div>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open" role="presentation"></div>
+    </template>
+</template>

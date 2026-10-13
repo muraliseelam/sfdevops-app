@@ -1,0 +1,151 @@
+<template>
+    <lightning-card title="Data deploy" icon-name="standard:data_integration_hub">
+        <div slot="actions">
+            <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh data sets" title="Refresh data sets"
+                onclick={handleRefresh}></lightning-button-icon>
+        </div>
+        <div class="slds-card__body_inner">
+            <template lwc:if={listError}>
+                <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                    <span class="slds-assistive-text">Error</span>
+                    <h2>Could not load data sets: {listError}</h2>
+                </div>
+            </template>
+            <template lwc:elseif={hasDataSets}>
+                <div class="slds-grid slds-wrap slds-gutters_small">
+                    <nav class="slds-col slds-size_1-of-1 slds-medium-size_1-of-4" aria-label="Data sets">
+                        <h3 class="slds-text-title_caps slds-m-bottom_x-small">Data sets</h3>
+                        <ul>
+                            <template for:each={dataSetItems} for:item="ds">
+                                <li key={ds.id} class="slds-m-bottom_xx-small">
+                                    <button class={ds.className} data-id={ds.id} aria-current={ds.ariaCurrent} onclick={handleSelect}>
+                                        <span class="slds-truncate dataset-item__name">{ds.name}</span>
+                                        <span class="slds-text-body_small slds-text-color_weak">{ds.templateCount} templates</span>
+                                        <span class={ds.statusClass}>{ds.statusLabel}</span>
+                                    </button>
+                                </li>
+                            </template>
+                        </ul>
+                    </nav>
+
+                    <div class="slds-col slds-size_1-of-1 slds-medium-size_3-of-4">
+                        <template lwc:if={detailError}>
+                            <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                                <span class="slds-assistive-text">Error</span>
+                                <h2>Could not load the data set: {detailError}</h2>
+                            </div>
+                        </template>
+                        <template lwc:if={dataSet}>
+                            <div class="slds-grid slds-grid_vertical-align-center slds-wrap slds-m-bottom_x-small">
+                                <h3 class="slds-text-heading_medium slds-m-right_small"><a href={dataSetUrl}>{dataSet.Name}</a></h3>
+                                <span class={statusClass}>{statusLabel}</span>
+                            </div>
+                            <template lwc:if={dataSet.Description__c}>
+                                <p class="slds-m-bottom_x-small">{dataSet.Description__c}</p>
+                            </template>
+                            <p class="slds-text-body_small slds-text-color_weak">
+                                Last deployed: {lastDeployedLabel}
+                                <template lwc:if={dataSet.Last_Run_URL__c}>
+                                    · <a href={dataSet.Last_Run_URL__c} target="_blank" rel="noopener noreferrer">Last run<span class="slds-assistive-text"> (opens GitHub)</span></a>
+                                </template>
+                            </p>
+
+                            <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-m-top_medium slds-m-bottom_x-small">
+                                <h4 class="slds-text-title_caps">Templates</h4>
+                                <lightning-button label="Add template" icon-name="utility:add" onclick={handleNewTemplate} disabled={working}></lightning-button>
+                            </div>
+                            <template lwc:if={hasTemplates}>
+                                <lightning-datatable key-field="Id" data={templates} columns={templateColumns} hide-checkbox-column
+                                    onrowaction={handleRowAction} aria-label="Templates in this data set"></lightning-datatable>
+                            </template>
+                            <template lwc:else>
+                                <p class="slds-text-body_small slds-text-color_weak">No templates yet. A template says which records of one object to move.</p>
+                            </template>
+
+                            <template lwc:if={isEditing}>
+                                <section class="slds-box slds-m-top_small template-editor" aria-label={editorTitle}>
+                                    <h4 class="slds-text-heading_small slds-m-bottom_x-small">{editorTitle}</h4>
+                                    <div class="slds-grid slds-wrap slds-gutters_small">
+                                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                                            <lightning-input label="Object API name" data-field="Object_API_Name__c" value={editing.Object_API_Name__c}
+                                                onchange={handleEditorChange} placeholder="Account" max-length="80" required></lightning-input>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                                            <lightning-input label="Template name" data-field="Name" value={editing.Name} onchange={handleEditorChange}
+                                                placeholder="Defaults to the object name" max-length="80"></lightning-input>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-1">
+                                            <lightning-textarea label="Fields" data-field="Fields__c" value={editing.Fields__c} onchange={handleEditorChange}
+                                                placeholder="Name, Industry, External_Id__c" required
+                                                field-level-help="Comma-separated field API names"></lightning-textarea>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-1">
+                                            <lightning-textarea label="Filter" data-field="Filter__c" value={editing.Filter__c} onchange={handleEditorChange}
+                                                placeholder="Industry != null"
+                                                field-level-help="A SOQL WHERE clause without the WHERE keyword"></lightning-textarea>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-3">
+                                            <lightning-input label="External id field" data-field="External_Id_Field__c" value={editing.External_Id_Field__c}
+                                                onchange={handleEditorChange} max-length="80"
+                                                field-level-help="The field records are upserted on in the target"></lightning-input>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-2 slds-medium-size_1-of-3">
+                                            <lightning-input type="number" label="Order" data-field="Order__c" value={editing.Order__c}
+                                                onchange={handleEditorChange} min="1" step="1"></lightning-input>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-2 slds-medium-size_1-of-3">
+                                            <lightning-input type="number" label="Record limit" data-field="Record_Limit__c" value={editing.Record_Limit__c}
+                                                onchange={handleEditorChange} min="1" step="1"></lightning-input>
+                                        </div>
+                                    </div>
+                                    <div class="slds-text-align_right slds-m-top_small">
+                                        <lightning-button label="Cancel" onclick={handleCancelEdit} class="slds-m-right_x-small"></lightning-button>
+                                        <lightning-button variant="brand" label="Save template" onclick={handleSaveTemplate} disabled={working}></lightning-button>
+                                    </div>
+                                </section>
+                            </template>
+
+                            <template lwc:if={hasRelationships}>
+                                <h4 class="slds-text-title_caps slds-m-top_medium slds-m-bottom_x-small">Relationships</h4>
+                                <ul class="slds-list_dotted">
+                                    <template for:each={relationships} for:item="rel">
+                                        <li key={rel.id}>{rel.label} <span class="slds-text-color_weak">on {rel.field}</span></li>
+                                    </template>
+                                </ul>
+                            </template>
+
+                            <section class="slds-m-top_medium slds-box slds-theme_shade" aria-label="Deploy">
+                                <h4 class="slds-text-title_caps slds-m-bottom_x-small">Deploy</h4>
+                                <div class="slds-grid slds-wrap slds-gutters_small slds-grid_vertical-align-end">
+                                    <div class="slds-col slds-size_1-of-1 slds-medium-size_2-of-5">
+                                        <lightning-combobox label="From environment" value={sourceEnv} options={environmentOptions}
+                                            onchange={handleSourceChange} placeholder="Choose the source"></lightning-combobox>
+                                    </div>
+                                    <div class="slds-col slds-size_1-of-1 slds-medium-size_2-of-5">
+                                        <lightning-combobox label="To environment" value={targetEnv} options={environmentOptions}
+                                            onchange={handleTargetChange} placeholder="Choose the target"></lightning-combobox>
+                                    </div>
+                                    <div class="slds-col">
+                                        <lightning-button variant="brand" label="Deploy data" icon-name="utility:upload"
+                                            onclick={handleDeploy} disabled={deployDisabled}></lightning-button>
+                                    </div>
+                                </div>
+                                <template lwc:if={deployHint}>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-top_x-small">{deployHint}</p>
+                                </template>
+                            </section>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            <template lwc:else>
+                <p class="slds-text-color_weak">
+                    No data sets yet. Create a Data Set record, then add templates here to move records between environments.
+                </p>
+            </template>
+            <template lwc:if={working}>
+                <lightning-spinner alternative-text="Working" size="small"></lightning-spinner>
+            </template>
+        </div>
+    </lightning-card>
+</template>

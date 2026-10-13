@@ -1,0 +1,45 @@
+.board {
+    overflow-x: auto;
+    gap: 0.75rem;
+    padding-bottom: 0.5rem;
+}
+
+.board__column {
+    flex: 0 0 12.5rem;
+    background: var(--slds-g-color-neutral-base-95, #f3f3f3);
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    min-height: 8rem;
+}
+
+.release-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    text-align: left;
+    background: var(--slds-g-color-neutral-base-100, #ffffff);
+    cursor: pointer;
+}
+
+.release-tile:hover {
+    border-color: var(--slds-g-color-brand-base-50, #0176d3);
+}
+
+.release-tile:focus-visible {
+    outline: 2px solid var(--slds-g-color-brand-base-50, #0176d3);
+    outline-offset: 1px;
+}
+
+.release-tile_selected {
+    border: 2px solid var(--slds-g-color-brand-base-50, #0176d3);
+}
+
+.release-tile__name {
+    max-width: 100%;
+}
+
+.available-table {
+    max-height: 20rem;
+    overflow-y: auto;
+}

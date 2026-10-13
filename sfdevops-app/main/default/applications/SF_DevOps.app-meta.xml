@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomApplication xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- App visibility is a separate grant from tabs: CDO_User grants applicationVisibilities
+         for SF_DevOps, or the App Launcher stays empty however many tabs a user can see. -->
+    <actionOverrides>
+        <actionName>View</actionName>
+        <comment>Work item command center record page.</comment>
+        <content>CDO_Work_Item_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <skipRecordTypeSelect>false</skipRecordTypeSelect>
+        <type>Flexipage</type>
+        <pageOrSobjectType>CDO_Work_Item__c</pageOrSobjectType>
+    </actionOverrides>
+    <actionOverrides>
+        <actionName>View</actionName>
+        <comment>Promotion record page.</comment>
+        <content>CDO_Promotion_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <skipRecordTypeSelect>false</skipRecordTypeSelect>
+        <type>Flexipage</type>
+        <pageOrSobjectType>CDO_Promotion__c</pageOrSobjectType>
+    </actionOverrides>
+    <brand>
+        <headerColor>#0B5CAB</headerColor>
+        <shouldOverrideOrgTheme>false</shouldOverrideOrgTheme>
+    </brand>
+    <description>SF DevOps: work items, promotions, deployments and releases for the open-source Salesforce DevOps delivery platform.</description>
+    <formFactors>Small</formFactors>
+    <formFactors>Large</formFactors>
+    <isNavAutoTempTabsDisabled>false</isNavAutoTempTabsDisabled>
+    <isNavPersonalizationDisabled>false</isNavPersonalizationDisabled>
+    <isNavTabPersistenceDisabled>false</isNavTabPersistenceDisabled>
+    <label>SF DevOps</label>
+    <navType>Standard</navType>
+    <tabs>CDO_Pipeline</tabs>
+    <tabs>CDO_Work_Item__c</tabs>
+    <tabs>CDO_Promotion__c</tabs>
+    <tabs>CDO_Deployment__c</tabs>
+    <tabs>CDO_Release_Board</tabs>
+    <tabs>CDO_Release__c</tabs>
+    <tabs>CDO_Delivery_Metrics</tabs>
+    <tabs>CDO_Commit__c</tabs>
+    <tabs>CDO_Component__c</tabs>
+    <tabs>CDO_Approval__c</tabs>
+    <tabs>CDO_Scan_Finding__c</tabs>
+    <tabs>CDO_Test_Script__c</tabs>
+    <tabs>CDO_Audit_Event__c</tabs>
+    <tabs>CDO_Data_Deploy</tabs>
+    <tabs>CDO_Project__c</tabs>
+    <tabs>CDO_Stage__c</tabs>
+    <tabs>CDO_Environment__c</tabs>
+    <uiType>Lightning</uiType>
+</CustomApplication>

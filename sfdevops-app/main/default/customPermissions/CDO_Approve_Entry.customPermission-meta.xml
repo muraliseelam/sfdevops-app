@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomPermission xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Approve a work item into the pipeline entry stage from the hub, the equivalent of an admin adding the approved label on GitHub.</description>
+    <isLicensed>false</isLicensed>
+    <label>Approve Entry Stage</label>
+</CustomPermission>

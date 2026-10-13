@@ -1,0 +1,400 @@
+# Hub data model — the single definition of every CDO_* object and field.
+# tools/gen_metadata.py turns this into objects/, fields/, tabs/, layouts/ under
+# sfdevops-app/main/default. Edit here, regenerate, never hand-edit the generated XML.
+#
+# Field types: Text(length) | TextArea | LongTextArea(length, lines) | Checkbox(default) |
+#   Number(precision, scale) | Percent(precision, scale) | Date | DateTime | Url | Email |
+#   Picklist(values, default?, restricted=true) | MultiselectPicklist(values, lines) |
+#   Lookup(to, relationship) | MasterDetail(to, relationship)
+# Picklist values: API names; the label is the API name with "_" replaced by " ".
+# Percent fields never get a default (a metadata default is a fraction: 0.85 = 85 %).
+# Lookups to User need org-unique relationship names, hence the CDO_ prefix on those.
+
+objects:
+
+  CDO_Project__c:
+    label: Project
+    plural: Projects
+    name: {label: Project Name, type: Text}
+    description: A repository, its baseline branch and the stages of its pipeline.
+    fields:
+      Key__c: {type: Text, length: 80, external_id: true, unique: true, label: Key}
+      Repository__c: {type: Text, length: 255, label: Repository, help: "owner/repo on GitHub"}
+      Baseline_Branch__c: {type: Text, length: 255, label: Baseline Branch}
+      Delta_Baseline__c: {type: Picklist, values: [baseline, target], default: target, label: Delta Baseline}
+      Auto_Merge__c: {type: Checkbox, default: false, label: Auto Merge}
+      Coverage_Threshold__c: {type: Percent, precision: 5, scale: 2, label: Coverage Threshold}
+      Source_Path__c: {type: Text, length: 255, label: Source Path}
+      API_Version__c: {type: Text, length: 10, label: API Version}
+      Profiles_Mode__c: {type: Picklist, values: [full, incremental], label: Profiles Mode}
+      Active__c: {type: Checkbox, default: true, label: Active}
+      Config_Hash__c: {type: Text, length: 64, label: Config Hash, help: "SHA-256 of pipeline.config.yml at the last seed"}
+      Last_Seeded_On__c: {type: DateTime, label: Last Seeded On}
+      Description__c: {type: LongTextArea, length: 32768, lines: 4, label: Description}
+
+  CDO_Environment__c:
+    label: Environment
+    plural: Environments
+    name: {label: Environment Name, type: Text}
+    description: A Salesforce org in the pipeline (source, chain or production).
+    fields:
+      Key__c: {type: Text, length: 120, external_id: true, unique: true, label: Key}
+      Project__c: {type: Lookup, to: CDO_Project__c, relationship: Environments, label: Project}
+      Pipeline_Key__c: {type: Text, length: 80, label: Pipeline Key}
+      Type__c: {type: Picklist, values: [Source, Pipeline, Production, Hub], label: Type}
+      Branch__c: {type: Text, length: 255, label: Branch}
+      GitHub_Environment__c: {type: Text, length: 255, label: GitHub Environment}
+      Validate_Environment__c: {type: Text, length: 255, label: Validate Environment}
+      Org_Alias__c: {type: Text, length: 80, label: Org Alias}
+      Test_Level__c: {type: Picklist, values: [NoTestRun, RunSpecifiedTests, RunLocalTests, RunAllTestsInOrg], label: Test Level}
+      Health_Status__c: {type: Picklist, values: [Healthy, Degraded, Down], label: Health Status, help: "Derived from the last deployment. Blank until something has been deployed here."}
+      Last_Deployment__c: {type: Lookup, to: CDO_Deployment__c, relationship: Last_Deployed_Environments, label: Last Deployment}
+      Last_Deployed_On__c: {type: DateTime, label: Last Deployed On}
+      Instance_URL__c: {type: Url, label: Instance URL}
+      Description__c: {type: LongTextArea, length: 32768, lines: 3, label: Description}
+
+  CDO_Stage__c:
+    label: Stage
+    plural: Stages
+    name: {label: Stage Name, type: Text}
+    description: A position in the promotion chain.
+    sharing: ControlledByParent
+    fields:
+      Key__c: {type: Text, length: 120, external_id: true, unique: true, label: Key}
+      Project__c: {type: MasterDetail, to: CDO_Project__c, relationship: Stages, label: Project}
+      Environment__c: {type: Lookup, to: CDO_Environment__c, relationship: Stages, label: Environment}
+      Order__c: {type: Number, precision: 3, scale: 0, label: Order}
+      Gate_Type__c: {type: Picklist, values: [Review, Self_Service, Required_Reviewer], label: Gate Type}
+      Coverage_Floor__c: {type: Percent, precision: 5, scale: 2, label: Coverage Floor}
+      Is_Entry__c: {type: Checkbox, default: false, label: Is Entry}
+      Is_Production__c: {type: Checkbox, default: false, label: Is Production}
+      Branch__c: {type: Text, length: 255, label: Branch}
+      Pipeline_Key__c: {type: Text, length: 80, label: Pipeline Key}
+      Test_Level__c: {type: Picklist, values: [NoTestRun, RunSpecifiedTests, RunLocalTests, RunAllTestsInOrg], label: Test Level}
+
+  CDO_Release__c:
+    label: Release
+    plural: Releases
+    name: {label: Release Name, type: Text}
+    description: A bundle of work items that ship to production together.
+    fields:
+      Project__c: {type: Lookup, to: CDO_Project__c, relationship: Releases, label: Project}
+      Status__c: {type: Picklist, values: [Planned, Assembling, Ready, Validating, Releasing, Released, Failed, Cancelled], default: Planned, label: Status}
+      Release_Branch__c: {type: Text, length: 255, label: Release Branch}
+      Version__c: {type: Text, length: 40, label: Version}
+      Target_Date__c: {type: Date, label: Target Date}
+      Released_On__c: {type: DateTime, label: Released On}
+      Tag__c: {type: Text, length: 255, label: Tag}
+      Release_URL__c: {type: Url, label: Release URL}
+      Workflow_Run_URL__c: {type: Url, label: Workflow Run URL}
+      Validated_Deploy_Id__c: {type: Text, length: 18, label: Validated Deploy Id}
+      Notes__c: {type: LongTextArea, length: 32768, lines: 4, label: Notes}
+
+  CDO_Work_Item__c:
+    label: Work Item
+    plural: Work Items
+    name: {label: Work Item, type: AutoNumber, format: "WI-{0000}"}
+    description: The unit of change that moves stage by stage to production.
+    fields:
+      Subject__c: {type: Text, length: 255, required: true, label: Subject}
+      Status__c: {type: Picklist, values: [New, In_Progress, Committed, In_Review, Approved, Promoting, Deployed, Blocked, Done, Cancelled], default: New, label: Status}
+      Project__c: {type: Lookup, to: CDO_Project__c, relationship: Work_Items, label: Project}
+      Current_Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Current_Work_Items, label: Current Stage}
+      Release__c: {type: Lookup, to: CDO_Release__c, relationship: Work_Items, label: Release}
+      Developer__c: {type: Lookup, to: User, relationship: CDO_Work_Items, label: Developer}
+      Feature_Branch__c: {type: Text, length: 255, label: Feature Branch}
+      Source_Org_Alias__c: {type: Text, length: 80, label: Source Org, help: "A source_orgs key from pipeline.config.yml"}
+      Merge_State__c: {type: Picklist, values: [Not_Merged, Merged, Conflict], default: Not_Merged, label: Merge State}
+      Minimum_Coverage__c: {type: Percent, precision: 5, scale: 2, label: Minimum Coverage}
+      Pull_Request_URL__c: {type: Url, label: Pull Request URL}
+      Pull_Request_Number__c: {type: Number, precision: 10, scale: 0, label: Pull Request Number}
+      Pull_Requests_Approved__c: {type: Checkbox, default: false, label: Pull Requests Approved}
+      Review_State__c: {type: Picklist, values: [Pending, Approved, Changes_Requested], default: Pending, label: Review State}
+      Story_Points__c: {type: Number, precision: 3, scale: 0, label: Story Points}
+      Acceptance_Criteria__c: {type: LongTextArea, length: 32768, lines: 4, label: Acceptance Criteria}
+      Description__c: {type: LongTextArea, length: 32768, lines: 4, label: Description}
+      Specified_Tests__c: {type: Text, length: 255, label: Specified Tests, help: "Comma-separated Apex test classes. Overrides automatic test resolution."}
+      Test_Level_Override__c: {type: Picklist, values: [NoTestRun, RunSpecifiedTests, RunLocalTests, RunAllTestsInOrg], label: Test Level Override}
+      Last_Coverage__c: {type: Percent, precision: 5, scale: 2, label: Last Coverage}
+      Last_Tests_Passed__c: {type: Checkbox, default: false, label: Last Tests Passed}
+      Last_Validation_Status__c: {type: Picklist, values: [Not_Run, Running, Passed, Failed], default: Not_Run, label: Last Validation Status}
+      Last_Run_URL__c: {type: Url, label: Last Run URL}
+      Last_Commit_SHA__c: {type: Text, length: 40, label: Last Commit SHA}
+      Blocked_Reason__c: {type: LongTextArea, length: 32768, lines: 3, label: Blocked Reason}
+      Conflict_Paths__c: {type: LongTextArea, length: 32768, lines: 3, label: Conflict Paths}
+      Source_Changes_JSON__c: {type: LongTextArea, length: 131072, lines: 3, label: Source Changes JSON}
+      Source_Changes_Status__c: {type: Picklist, values: [Idle, Requested, Received, Failed], default: Idle, label: Source Changes Status}
+      Source_Changes_Received_On__c: {type: DateTime, label: Source Changes Received On}
+
+  CDO_Commit__c:
+    label: Commit
+    plural: Commits
+    name: {label: Commit, type: Text}
+    description: One git commit made for a work item.
+    sharing: ControlledByParent
+    fields:
+      Work_Item__c: {type: MasterDetail, to: CDO_Work_Item__c, relationship: Commits, label: Work Item}
+      SHA__c: {type: Text, length: 40, external_id: true, unique: true, label: SHA}
+      Branch__c: {type: Text, length: 255, label: Branch}
+      Message__c: {type: LongTextArea, length: 32768, lines: 3, label: Message}
+      Component_Count__c: {type: Number, precision: 6, scale: 0, label: Component Count}
+      Workflow_Run_URL__c: {type: Url, label: Workflow Run URL}
+      Committed_By__c: {type: Text, length: 255, label: Committed By}
+      Committed_On__c: {type: DateTime, label: Committed On}
+
+  CDO_Component__c:
+    label: Component
+    plural: Components
+    name: {label: Component, type: Text}
+    description: One piece of metadata a work item carries, and what is happening to it.
+    sharing: ControlledByParent
+    fields:
+      Work_Item__c: {type: MasterDetail, to: CDO_Work_Item__c, relationship: Components, label: Work Item}
+      Metadata_Type__c: {type: Text, length: 80, label: Metadata Type}
+      Member_Name__c: {type: Text, length: 255, label: Member Name}
+      Unique_ID__c: {type: Text, length: 255, label: Unique ID, help: "Type:Member, identical across work items so overlaps can be joined"}
+      Work_Item_Key__c: {type: Text, length: 255, external_id: true, unique: true, label: Work Item Key, help: "WI-0001|Type:Member, the upsert key"}
+      Action__c: {type: Picklist, values: [Add, Modify, Delete, Retrieve], label: Action}
+      Path__c: {type: Text, length: 255, label: Path}
+      Last_Commit_Date__c: {type: DateTime, label: Last Commit Date}
+      Last_Commit_SHA__c: {type: Text, length: 40, label: Last Commit SHA}
+      Has_Conflict__c: {type: Checkbox, default: false, label: Has Conflict}
+
+  CDO_Promotion__c:
+    label: Promotion
+    plural: Promotions
+    name: {label: Promotion, type: AutoNumber, format: "PRM-{00000}"}
+    description: A move of one or more work items from one stage to the next.
+    fields:
+      Project__c: {type: Lookup, to: CDO_Project__c, relationship: Promotions, label: Project}
+      Source_Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Outbound_Promotions, label: Source Stage}
+      Target_Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Inbound_Promotions, label: Target Stage}
+      Direction__c: {type: Picklist, values: [Forward, Back], default: Forward, label: Direction}
+      Status__c: {type: Picklist, values: [Draft, Queued, Dispatched, Deploying, Deployed, Failed, Conflict, Cancelled], default: Draft, label: Status}
+      Promotion_Branch__c: {type: Text, length: 255, label: Promotion Branch}
+      Target_Branch__c: {type: Text, length: 255, label: Target Branch}
+      Workflow_Run_URL__c: {type: Url, label: Workflow Run URL}
+      Target_SHA_At_Cut__c: {type: Text, length: 40, label: Target SHA At Cut}
+      Merge_SHA__c: {type: Text, length: 40, label: Merge SHA}
+      Check_Only__c: {type: Checkbox, default: false, label: Check Only}
+      Test_Level__c: {type: Picklist, values: [NoTestRun, RunSpecifiedTests, RunLocalTests, RunAllTestsInOrg], label: Test Level}
+      Specified_Tests__c: {type: Text, length: 255, label: Specified Tests}
+      Allow_Destructive__c: {type: Checkbox, default: true, label: Allow Destructive}
+      Dispatched_On__c: {type: DateTime, label: Dispatched On}
+      Completed_On__c: {type: DateTime, label: Completed On}
+      Message__c: {type: LongTextArea, length: 32768, lines: 3, label: Message}
+      Requested_By__c: {type: Lookup, to: User, relationship: CDO_Promotions, label: Requested By}
+
+  CDO_Promoted_Work_Item__c:
+    label: Promoted Work Item
+    plural: Promoted Work Items
+    name: {label: Promoted Work Item, type: AutoNumber, format: "PWI-{00000}"}
+    description: Junction. Which work items a promotion carried.
+    sharing: ControlledByParent
+    fields:
+      Promotion__c: {type: MasterDetail, to: CDO_Promotion__c, relationship: Promoted_Work_Items, label: Promotion}
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Promoted_Work_Items, label: Work Item}
+      Status__c: {type: Picklist, values: [Pending, Deployed, Failed, Conflict], default: Pending, label: Status}
+      Unique_Key__c: {type: Text, length: 80, external_id: true, unique: true, label: Unique Key, help: "PromotionId:WorkItemId"}
+
+  CDO_Deployment__c:
+    label: Deployment
+    plural: Deployments
+    name: {label: Deployment, type: AutoNumber, format: "DEP-{00000}"}
+    description: One deploy or validation attempt against one stage, with its test results.
+    fields:
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Deployments, label: Work Item}
+      Promotion__c: {type: Lookup, to: CDO_Promotion__c, relationship: Deployments, label: Promotion}
+      Release__c: {type: Lookup, to: CDO_Release__c, relationship: Deployments, label: Release}
+      Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Deployments, label: Stage}
+      Environment__c: {type: Lookup, to: CDO_Environment__c, relationship: Deployments, label: Environment}
+      Status__c: {type: Picklist, values: [Running, Success, Failed, Cancelled], default: Running, label: Status}
+      Event_Type__c: {type: Picklist, values: [Commit, Validation, Deploy, QuickDeploy, Rollback, Data], label: Event Type}
+      Check_Only__c: {type: Checkbox, default: false, label: Check Only}
+      Workflow_Run_URL__c: {type: Url, label: Workflow Run URL}
+      Deploy_Id__c: {type: Text, length: 18, label: Deploy Id}
+      Commit_SHA__c: {type: Text, length: 40, label: Commit SHA}
+      Coverage_Percent__c: {type: Percent, precision: 5, scale: 2, label: Coverage Percent}
+      Tests_Passed__c: {type: Checkbox, default: false, label: Tests Passed}
+      Failing_Methods__c: {type: LongTextArea, length: 32768, lines: 4, label: Failing Methods}
+      Message__c: {type: LongTextArea, length: 32768, lines: 3, label: Message}
+      Started_On__c: {type: DateTime, label: Started On}
+      Completed_On__c: {type: DateTime, label: Completed On}
+      Component_Count__c: {type: Number, precision: 6, scale: 0, label: Component Count}
+      Test_Level__c: {type: Text, length: 40, label: Test Level}
+
+  CDO_Deployment_Step__c:
+    label: Deployment Step
+    plural: Deployment Steps
+    name: {label: Step, type: Text}
+    description: Pre, deploy or post work planned against a deployment.
+    fields:
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Deployment_Steps, label: Work Item}
+      Deployment__c: {type: Lookup, to: CDO_Deployment__c, relationship: Deployment_Steps, label: Deployment}
+      Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Deployment_Steps, label: Stage}
+      Phase__c: {type: Picklist, values: [Pre, Deploy, Post], default: Pre, label: Phase}
+      Order__c: {type: Number, precision: 4, scale: 0, label: Order}
+      Type__c: {type: Picklist, values: [Manual, Apex, Data, Command], default: Manual, label: Type}
+      Instructions__c: {type: LongTextArea, length: 32768, lines: 4, label: Instructions}
+      Status__c: {type: Picklist, values: [Pending, In_Progress, Done, Skipped, Failed], default: Pending, label: Status}
+      Completed_By__c: {type: Lookup, to: User, relationship: CDO_Deployment_Steps, label: Completed By}
+      Completed_On__c: {type: DateTime, label: Completed On}
+
+  CDO_Approval__c:
+    label: Approval
+    plural: Approvals
+    name: {label: Approval, type: AutoNumber, format: "APR-{00000}"}
+    description: An approval decision against a promotion or work item.
+    fields:
+      Promotion__c: {type: Lookup, to: CDO_Promotion__c, relationship: Approvals, label: Promotion}
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Approvals, label: Work Item}
+      Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Approvals, label: Stage}
+      Approver__c: {type: Text, length: 255, label: Approver}
+      Method__c: {type: Picklist, values: [Review, Label, Manual, Environment], label: Method}
+      Decision__c: {type: Picklist, values: [Approved, Rejected, Removed], label: Decision}
+      Decided_On__c: {type: DateTime, label: Decided On}
+      Comments__c: {type: LongTextArea, length: 32768, lines: 3, label: Comments}
+      Source_URL__c: {type: Url, label: Source URL}
+
+  CDO_Scan_Finding__c:
+    label: Scan Finding
+    plural: Scan Findings
+    name: {label: Finding, type: AutoNumber, format: "SCAN-{00000}"}
+    description: A static-analysis finding.
+    fields:
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Scan_Findings, label: Work Item}
+      Deployment__c: {type: Lookup, to: CDO_Deployment__c, relationship: Scan_Findings, label: Deployment}
+      Tool__c: {type: Picklist, values: [PMD, Sonar, ESLint], label: Tool}
+      Rule__c: {type: Text, length: 255, label: Rule}
+      Severity__c: {type: Picklist, values: [Critical, High, Medium, Low, Info], label: Severity}
+      File__c: {type: Text, length: 255, label: File}
+      Line__c: {type: Number, precision: 8, scale: 0, label: Line}
+      Message__c: {type: LongTextArea, length: 32768, lines: 3, label: Message}
+
+  CDO_Test_Script__c:
+    label: Test Script
+    plural: Test Scripts
+    name: {label: Test Script Name, type: Text}
+    description: A manual test.
+    fields:
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Test_Scripts, label: Work Item}
+      Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Test_Scripts, label: Stage}
+      Steps__c: {type: LongTextArea, length: 32768, lines: 6, label: Steps}
+      Expected_Result__c: {type: LongTextArea, length: 32768, lines: 3, label: Expected Result}
+      Order__c: {type: Number, precision: 4, scale: 0, label: Order}
+
+  CDO_Test_Result__c:
+    label: Test Result
+    plural: Test Results
+    name: {label: Test Result, type: AutoNumber, format: "TR-{00000}"}
+    description: The outcome of running a manual test.
+    sharing: ControlledByParent
+    fields:
+      Test_Script__c: {type: MasterDetail, to: CDO_Test_Script__c, relationship: Test_Results, label: Test Script}
+      Stage__c: {type: Lookup, to: CDO_Stage__c, relationship: Test_Results, label: Stage}
+      Outcome__c: {type: Picklist, values: [Pass, Fail, Blocked, Not_Run], default: Not_Run, label: Outcome}
+      Tested_By__c: {type: Lookup, to: User, relationship: CDO_Test_Results, label: Tested By}
+      Tested_On__c: {type: DateTime, label: Tested On}
+      Notes__c: {type: LongTextArea, length: 32768, lines: 3, label: Notes}
+
+  CDO_Audit_Event__c:
+    label: Audit Event
+    plural: Audit Events
+    name: {label: Audit Event, type: AutoNumber, format: "AUD-{0000000}"}
+    description: Append-only history. Everything of consequence writes one.
+    append_only: true
+    fields:
+      Event_Type__c: {type: Text, length: 80, label: Event Type}
+      Summary__c: {type: Text, length: 255, label: Summary}
+      Details__c: {type: LongTextArea, length: 131072, lines: 6, label: Details}
+      Actor__c: {type: Text, length: 255, label: Actor}
+      Source__c: {type: Picklist, values: [Hub, GitHub, System], label: Source}
+      Work_Item__c: {type: Lookup, to: CDO_Work_Item__c, relationship: Audit_Events, label: Work Item}
+      Promotion__c: {type: Lookup, to: CDO_Promotion__c, relationship: Audit_Events, label: Promotion}
+      Deployment__c: {type: Lookup, to: CDO_Deployment__c, relationship: Audit_Events, label: Deployment}
+      Release__c: {type: Lookup, to: CDO_Release__c, relationship: Audit_Events, label: Release}
+      Run_URL__c: {type: Url, label: Run URL}
+      Occurred_On__c: {type: DateTime, label: Occurred On}
+
+  CDO_Webhook__c:
+    label: Webhook
+    plural: Webhooks
+    name: {label: Webhook Name, type: Text}
+    description: An outbound notification target (Named Credential + path).
+    fields:
+      Named_Credential__c: {type: Text, length: 255, label: Named Credential}
+      Path__c: {type: Text, length: 255, label: Path}
+      Events__c: {type: MultiselectPicklist, values: [Commit, Validation, Deploy, Promotion, Release, Conflict, Approval], lines: 4, label: Events}
+      Format__c: {type: Picklist, values: [Generic_JSON, Webex, Slack, Teams], default: Generic_JSON, label: Format}
+      Active__c: {type: Checkbox, default: true, label: Active}
+      Last_Status__c: {type: Text, length: 80, label: Last Status}
+      Last_Sent_On__c: {type: DateTime, label: Last Sent On}
+
+  CDO_Component_Dependency__c:
+    label: Component Dependency
+    plural: Component Dependencies
+    name: {label: Dependency, type: AutoNumber, format: "DEPN-{00000}"}
+    description: A dependency edge between two components.
+    sharing: ControlledByParent
+    fields:
+      Component__c: {type: MasterDetail, to: CDO_Component__c, relationship: Dependencies, label: Component}
+      Depends_On__c: {type: Lookup, to: CDO_Component__c, relationship: Dependents, label: Depends On}
+      Depends_On_Unique_ID__c: {type: Text, length: 255, label: Depends On Unique ID}
+      Dependency_Type__c: {type: Picklist, values: [Reference, Parent, Field, Code], label: Dependency Type}
+
+  CDO_Data_Set__c:
+    label: Data Set
+    plural: Data Sets
+    name: {label: Data Set Name, type: Text}
+    description: A records-not-metadata deployment.
+    fields:
+      Project__c: {type: Lookup, to: CDO_Project__c, relationship: Data_Sets, label: Project}
+      Description__c: {type: LongTextArea, length: 32768, lines: 3, label: Description}
+      Status__c: {type: Picklist, values: [Draft, Ready, Deploying, Deployed, Failed], default: Draft, label: Status}
+      Source_Environment__c: {type: Lookup, to: CDO_Environment__c, relationship: Source_Data_Sets, label: Source Environment}
+      Target_Environment__c: {type: Lookup, to: CDO_Environment__c, relationship: Target_Data_Sets, label: Target Environment}
+      Last_Run_URL__c: {type: Url, label: Last Run URL}
+      Last_Deployed_On__c: {type: DateTime, label: Last Deployed On}
+
+  CDO_Data_Template__c:
+    label: Data Template
+    plural: Data Templates
+    name: {label: Template Name, type: Text}
+    description: One object's extraction rule inside a data set.
+    sharing: ControlledByParent
+    fields:
+      Data_Set__c: {type: MasterDetail, to: CDO_Data_Set__c, relationship: Data_Templates, label: Data Set}
+      Object_API_Name__c: {type: Text, length: 80, label: Object API Name}
+      Fields__c: {type: LongTextArea, length: 32768, lines: 3, label: Fields, help: "Comma-separated field API names"}
+      Filter__c: {type: LongTextArea, length: 32768, lines: 2, label: Filter, help: "SOQL WHERE clause without the WHERE keyword"}
+      External_Id_Field__c: {type: Text, length: 80, label: External Id Field}
+      Order__c: {type: Number, precision: 4, scale: 0, label: Order}
+      Record_Limit__c: {type: Number, precision: 6, scale: 0, label: Record Limit}
+
+  CDO_Data_Relationship__c:
+    label: Data Relationship
+    plural: Data Relationships
+    name: {label: Relationship, type: AutoNumber, format: "DREL-{00000}"}
+    description: A parent/child link between two data templates.
+    sharing: ControlledByParent
+    fields:
+      Data_Set__c: {type: MasterDetail, to: CDO_Data_Set__c, relationship: Data_Relationships, label: Data Set}
+      Parent_Template__c: {type: Lookup, to: CDO_Data_Template__c, relationship: Child_Relationships, label: Parent Template}
+      Child_Template__c: {type: Lookup, to: CDO_Data_Template__c, relationship: Parent_Relationships, label: Child Template}
+      Relationship_Field__c: {type: Text, length: 80, label: Relationship Field}
+
+custom_settings:
+
+  CDO_Settings__c:
+    label: SF DevOps Settings
+    setting_type: Hierarchy
+    visibility: Public
+    description: Org-level platform settings (GitHub repository, ref, Named Credential).
+    fields:
+      GitHub_Owner__c: {type: Text, length: 100, label: GitHub Owner}
+      GitHub_Repo__c: {type: Text, length: 100, label: GitHub Repo}
+      Workflow_Ref__c: {type: Text, length: 255, label: Workflow Ref, default_text: main}
+      Named_Credential__c: {type: Text, length: 80, label: Named Credential, default_text: GitHub_API}
+      Default_Project_Key__c: {type: Text, length: 80, label: Default Project Key}
+      Dispatch_Enabled__c: {type: Checkbox, default: true, label: Dispatch Enabled}
+      Promotion_Timeout_Minutes__c: {type: Number, precision: 4, scale: 0, label: Promotion Timeout Minutes, default_number: 90}

@@ -1,0 +1,125 @@
+<template>
+    <lightning-card title="New work item" icon-name="standard:work_order">
+        <div class="slds-card__body_inner">
+            <template lwc:if={noProjects}>
+                <p class="slds-text-color_weak slds-m-bottom_small">
+                    No project is set up yet. The work item will be created without one; run seed-pipeline.py to load the pipeline.
+                </p>
+            </template>
+            <div class="slds-grid slds-wrap slds-gutters_small">
+                <div class="slds-col slds-size_1-of-1">
+                    <lightning-input
+                        label="Subject"
+                        data-field="subject"
+                        value={subject}
+                        onchange={handleChange}
+                        max-length="255"
+                        required
+                        message-when-value-missing="Enter a subject."
+                    ></lightning-input>
+                </div>
+                <template lwc:if={showProjectPicker}>
+                    <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                        <lightning-combobox
+                            label="Project"
+                            data-field="projectId"
+                            value={projectId}
+                            options={projectOptions}
+                            onchange={handleChange}
+                            required
+                        ></lightning-combobox>
+                    </div>
+                </template>
+                <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                    <lightning-combobox
+                        label="Release"
+                        data-field="releaseId"
+                        value={releaseId}
+                        options={releaseOptions}
+                        onchange={handleChange}
+                    ></lightning-combobox>
+                </div>
+                <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                    <lightning-combobox
+                        label="Source org"
+                        data-field="sourceOrg"
+                        value={sourceOrg}
+                        options={sourceOrgOptions}
+                        onchange={handleChange}
+                        field-level-help="The sandbox you will build the change in. You can choose it later when you commit."
+                    ></lightning-combobox>
+                </div>
+                <div class="slds-col slds-size_1-of-2 slds-medium-size_1-of-4">
+                    <lightning-input
+                        type="number"
+                        label="Story points"
+                        data-field="storyPoints"
+                        value={storyPoints}
+                        onchange={handleChange}
+                        min="0"
+                        max="999"
+                        step="1"
+                    ></lightning-input>
+                </div>
+                <div class="slds-col slds-size_1-of-2 slds-medium-size_1-of-4">
+                    <lightning-input
+                        type="number"
+                        label="Minimum coverage (%)"
+                        data-field="minimumCoverage"
+                        value={minimumCoverage}
+                        onchange={handleChange}
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        field-level-help="Enter 85 for 85%. Blank uses the stage's coverage floor."
+                    ></lightning-input>
+                </div>
+                <div class="slds-col slds-size_1-of-1">
+                    <lightning-textarea
+                        label="Description"
+                        data-field="description"
+                        value={description}
+                        onchange={handleChange}
+                    ></lightning-textarea>
+                </div>
+                <div class="slds-col slds-size_1-of-1">
+                    <lightning-textarea
+                        label="Acceptance criteria"
+                        data-field="acceptanceCriteria"
+                        value={acceptanceCriteria}
+                        onchange={handleChange}
+                    ></lightning-textarea>
+                </div>
+                <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                    <lightning-combobox
+                        label="Test level override"
+                        data-field="testLevel"
+                        value={testLevel}
+                        options={testLevelOptions}
+                        onchange={handleChange}
+                    ></lightning-combobox>
+                </div>
+                <template lwc:if={showSpecifiedTests}>
+                    <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                        <lightning-input
+                            label="Specified tests"
+                            data-field="specifiedTests"
+                            value={specifiedTests}
+                            onchange={handleChange}
+                            max-length="255"
+                            required
+                            field-level-help="Comma-separated Apex test classes"
+                        ></lightning-input>
+                    </div>
+                </template>
+            </div>
+        </div>
+        <div slot="footer" class="slds-text-align_right">
+            <lightning-button label="Clear" onclick={handleReset} class="slds-m-right_x-small"></lightning-button>
+            <lightning-button variant="brand" label="Create work item" onclick={handleSave} disabled={saveDisabled}></lightning-button>
+        </div>
+        <template lwc:if={saving}>
+            <lightning-spinner alternative-text="Creating the work item" size="small"></lightning-spinner>
+        </template>
+    </lightning-card>
+</template>

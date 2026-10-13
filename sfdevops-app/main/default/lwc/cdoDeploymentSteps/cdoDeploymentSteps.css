@@ -1,0 +1,11 @@
+.step-number {
+    min-width: 1.5rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--slds-g-color-neutral-base-50, #747474);
+}
+
+.step-instructions {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

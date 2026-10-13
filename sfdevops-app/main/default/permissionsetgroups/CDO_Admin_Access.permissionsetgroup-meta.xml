@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSetGroup xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Full SF DevOps access: everything in the developer, release manager and pipeline admin roles, including governance operations. All four SF DevOps permission sets.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SF DevOps Admin Access</label>
+    <permissionSets>CDO_User</permissionSets>
+    <permissionSets>CDO_Developer</permissionSets>
+    <permissionSets>CDO_Release_Manager</permissionSets>
+    <permissionSets>CDO_Pipeline_Admin</permissionSets>
+    <status>Updated</status>
+</PermissionSetGroup>

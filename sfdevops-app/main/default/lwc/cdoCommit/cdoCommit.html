@@ -1,0 +1,138 @@
+<template>
+    <lightning-card title="Commit changes" icon-name="standard:record_create">
+        <div slot="actions">
+            <lightning-button-icon icon-name="utility:refresh" alternative-text="Reload the change list" title="Reload the change list"
+                onclick={handleRefresh} disabled={polling}></lightning-button-icon>
+        </div>
+        <div class="slds-card__body_inner">
+            <template lwc:if={hasRecord}>
+                <template lwc:if={loadError}>
+                    <div class="slds-notify slds-notify_alert slds-alert_error slds-m-bottom_small" role="alert">
+                        <span class="slds-assistive-text">Error</span>
+                        <h2>{loadError}</h2>
+                    </div>
+                </template>
+
+                <!-- Step 1: source org and list changes -->
+                <div class="slds-grid slds-wrap slds-grid_vertical-align-end slds-gutters_small">
+                    <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                        <template lwc:if={hasSourceOrgs}>
+                            <lightning-combobox
+                                name="sourceOrg"
+                                label="Source org"
+                                placeholder="Choose the org you built the change in"
+                                value={sourceOrg}
+                                options={sourceOrgOptions}
+                                onchange={handleSourceOrgChange}
+                                required
+                            ></lightning-combobox>
+                        </template>
+                        <template lwc:else>
+                            <p class="slds-text-color_weak">
+                                No source orgs are configured. Add one under source_orgs in pipeline.config.yml and run seed-pipeline.py.
+                            </p>
+                        </template>
+                    </div>
+                    <div class="slds-col">
+                        <lightning-button
+                            variant="brand-outline"
+                            label="List changes"
+                            icon-name="utility:list"
+                            onclick={handleListChanges}
+                            disabled={listDisabled}
+                        ></lightning-button>
+                    </div>
+                </div>
+
+                <div class="slds-grid slds-grid_vertical-align-center slds-wrap slds-m-top_small" aria-live="polite">
+                    <span class={statusClass}>{statusLabel}</span>
+                    <template lwc:if={polling}>
+                        <div class="slds-is-relative slds-m-left_large spinner-inline">
+                            <lightning-spinner alternative-text="Waiting for the source org" size="x-small"></lightning-spinner>
+                        </div>
+                    </template>
+                    <template lwc:if={receivedLabel}>
+                        <span class="slds-m-left_small slds-text-body_small slds-text-color_weak" title={receivedTitle}>
+                            Received {receivedLabel}
+                        </span>
+                    </template>
+                </div>
+                <template lwc:if={changesMessage}>
+                    <p class="slds-text-body_small slds-m-top_x-small">{changesMessage}</p>
+                </template>
+
+                <!-- Step 2: select components -->
+                <template lwc:if={hasMembers}>
+                    <div class="slds-grid slds-wrap slds-gutters_small slds-m-top_medium slds-grid_vertical-align-end">
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                            <lightning-input
+                                type="search"
+                                label="Filter by name or author"
+                                value={filterText}
+                                onchange={handleFilterChange}
+                            ></lightning-input>
+                        </div>
+                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                            <lightning-combobox
+                                name="typeFilter"
+                                label="Metadata type"
+                                value={typeFilter}
+                                options={typeOptions}
+                                onchange={handleTypeFilterChange}
+                            ></lightning-combobox>
+                        </div>
+                    </div>
+                    <p class="slds-text-body_small slds-text-color_weak slds-m-vertical_x-small">{countLabel}, newest first</p>
+                    <template lwc:if={hasVisibleMembers}>
+                        <div class="changes-table">
+                            <lightning-datatable
+                                key-field="key"
+                                data={visibleMembers}
+                                columns={columns}
+                                selected-rows={selectedKeys}
+                                sorted-by={sortedBy}
+                                sorted-direction={sortedDirection}
+                                onsort={handleSort}
+                                onrowselection={handleRowSelection}
+                                aria-label="Changed components in the source org"
+                            ></lightning-datatable>
+                        </div>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-m-vertical_small">No components match the filter.</p>
+                    </template>
+
+                    <!-- Step 3: message and commit -->
+                    <div class="slds-m-top_medium">
+                        <lightning-textarea
+                            name="message"
+                            label="Commit message"
+                            value={message}
+                            onchange={handleMessageChange}
+                            max-length="2000"
+                            required
+                        ></lightning-textarea>
+                    </div>
+                    <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-m-top_small slds-wrap">
+                        <p class="slds-text-body_small" aria-live="polite">{selectionLabel}</p>
+                        <div>
+                            <lightning-button label="Clear selection" onclick={handleClearSelection} class="slds-m-right_x-small"></lightning-button>
+                            <lightning-button variant="brand" label="Commit" icon-name="utility:check" onclick={handleCommit}
+                                disabled={commitDisabled}></lightning-button>
+                        </div>
+                    </div>
+                </template>
+                <template lwc:else>
+                    <p class="slds-m-top_medium slds-text-color_weak">{emptyText}</p>
+                </template>
+
+                <template lwc:if={committing}>
+                    <lightning-spinner alternative-text="Requesting the commit" size="small"></lightning-spinner>
+                </template>
+            </template>
+            <template lwc:else>
+                <p class="slds-text-color_weak">Place this component on a Work Item record page to commit changes.</p>
+            </template>
+        </div>
+    </lightning-card>
+</template>

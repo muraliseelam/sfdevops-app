@@ -1,0 +1,152 @@
+<template>
+    <lightning-card title="Delivery metrics (DORA)" icon-name="standard:metrics">
+        <div slot="actions" class="slds-grid slds-grid_vertical-align-end slds-gutters_x-small">
+            <template lwc:if={showProjectPicker}>
+                <div class="slds-col">
+                    <lightning-combobox name="project" label="Project" variant="label-hidden" value={projectValue}
+                        options={projectOptions} onchange={handleProjectChange}></lightning-combobox>
+                </div>
+            </template>
+            <div class="slds-col">
+                <lightning-combobox name="window" label="Period" variant="label-hidden" value={days}
+                    options={windowOptions} onchange={handleWindowChange}></lightning-combobox>
+            </div>
+            <div class="slds-col">
+                <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh metrics" title="Refresh metrics"
+                    onclick={handleRefresh}></lightning-button-icon>
+            </div>
+        </div>
+
+        <div class="slds-card__body_inner">
+            <template lwc:if={isLoading}>
+                <div class="slds-is-relative slds-p-around_large">
+                    <lightning-spinner alternative-text="Loading metrics" size="small"></lightning-spinner>
+                </div>
+            </template>
+            <template lwc:elseif={error}>
+                <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                    <span class="slds-assistive-text">Error</span>
+                    <h2>Could not load the metrics: {error}</h2>
+                </div>
+            </template>
+            <template lwc:elseif={hasMetrics}>
+                <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_small">
+                    Production deployments, {periodLabel}. Check-only validations are not counted.
+                </p>
+
+                <ul class="tiles slds-grid slds-wrap slds-gutters_small" aria-label="DORA metrics">
+                    <template for:each={tiles} for:item="t">
+                        <li key={t.key} class="slds-col slds-size_1-of-1 slds-small-size_1-of-2 slds-large-size_1-of-4 slds-m-bottom_small">
+                            <article class="tile slds-box" aria-labelledby={t.headingId}>
+                                <h3 id={t.headingId} class="slds-text-title" title={t.help}>{t.title}</h3>
+                                <p class="tile__value">
+                                    <span class="slds-text-heading_large">{t.value}</span>
+                                    <span class="slds-text-body_small slds-text-color_weak slds-m-left_xx-small">{t.unit}</span>
+                                </p>
+                                <template lwc:if={t.hasLevel}>
+                                    <span class={t.levelClass}>{t.level}</span>
+                                </template>
+                                <p class="slds-text-body_small slds-text-color_weak slds-m-top_xx-small">{t.detail}</p>
+                            </article>
+                        </li>
+                    </template>
+                </ul>
+
+                <template lwc:if={hasDeployments}>
+                    <div class="slds-grid slds-wrap slds-gutters_small slds-m-top_small">
+                        <!-- Deployments per week (stacked: successful + failed) -->
+                        <figure class="slds-col slds-size_1-of-1 slds-large-size_1-of-2 slds-m-bottom_medium">
+                            <figcaption class="slds-text-heading_small slds-m-bottom_xx-small">Production deployments per week</figcaption>
+                            <ul class="legend slds-grid slds-m-bottom_xx-small" aria-hidden="true">
+                                <li class="slds-m-right_medium"><span class="swatch swatch_success"></span>Successful</li>
+                                <li><span class="swatch swatch_failure"></span>Failed</li>
+                            </ul>
+                            <svg class="chart" viewBox={viewBox} role="img" aria-label={deployChartSummary} preserveAspectRatio="xMidYMid meet">
+                                <template for:each={deployChart.ticks} for:item="tick">
+                                    <g key={tick.key}>
+                                        <line class="chart__grid" x1={tick.x1} x2={tick.x2} y1={tick.y} y2={tick.y}></line>
+                                        <text class="chart__axis" x={tick.labelX} y={tick.labelY} text-anchor="end">{tick.text}</text>
+                                    </g>
+                                </template>
+                                <template for:each={deployChart.bars} for:item="bar">
+                                    <g key={bar.key} class="chart__bar">
+                                        <title>{bar.tooltip}</title>
+                                        <rect class="chart__hit" x={bar.hitX} y={bar.hitY} width={bar.hitW} height={bar.hitH}></rect>
+                                        <path class="chart__success" d={bar.successPath}></path>
+                                        <path class="chart__failure" d={bar.failurePath}></path>
+                                        <text class="chart__value" x={bar.valueX} y={bar.valueY} text-anchor="middle">{bar.valueLabel}</text>
+                                    </g>
+                                </template>
+                                <line class="chart__baseline" x1={plotLeft} x2={plotRight} y1={baselineY} y2={baselineY}></line>
+                                <template for:each={deployChart.labels} for:item="label">
+                                    <text key={label.key} class="chart__axis" x={label.x} y={label.y} text-anchor="middle">{label.text}</text>
+                                </template>
+                            </svg>
+                        </figure>
+
+                        <!-- Median lead time per week -->
+                        <figure class="slds-col slds-size_1-of-1 slds-large-size_1-of-2 slds-m-bottom_medium">
+                            <figcaption class="slds-text-heading_small slds-m-bottom_xx-small">Median lead time per week</figcaption>
+                            <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_xx-small">First commit to production, for work items that reached production that week</p>
+                            <template lwc:if={leadChart.hasData}>
+                                <svg class="chart" viewBox={viewBox} role="img" aria-label={leadChartSummary} preserveAspectRatio="xMidYMid meet">
+                                    <template for:each={leadChart.ticks} for:item="tick">
+                                        <g key={tick.key}>
+                                            <line class="chart__grid" x1={tick.x1} x2={tick.x2} y1={tick.y} y2={tick.y}></line>
+                                            <text class="chart__axis" x={tick.labelX} y={tick.labelY} text-anchor="end">{tick.text}</text>
+                                        </g>
+                                    </template>
+                                    <template for:each={leadChart.bars} for:item="bar">
+                                        <g key={bar.key} class="chart__bar">
+                                            <title>{bar.tooltip}</title>
+                                            <rect class="chart__hit" x={bar.hitX} y={bar.hitY} width={bar.hitW} height={bar.hitH}></rect>
+                                            <path class="chart__lead" d={bar.path}></path>
+                                            <text class="chart__value" x={bar.valueX} y={bar.valueY} text-anchor="middle">{bar.valueLabel}</text>
+                                        </g>
+                                    </template>
+                                    <line class="chart__baseline" x1={plotLeft} x2={plotRight} y1={baselineY} y2={baselineY}></line>
+                                    <template for:each={leadChart.labels} for:item="label">
+                                        <text key={label.key} class="chart__axis" x={label.x} y={label.y} text-anchor="middle">{label.text}</text>
+                                    </template>
+                                </svg>
+                            </template>
+                            <template lwc:else>
+                                <p class="slds-text-color_weak slds-p-vertical_large">No work item with a recorded commit reached production in this period.</p>
+                            </template>
+                        </figure>
+                    </div>
+                </template>
+                <template lwc:else>
+                    <div class="slds-text-align_center slds-p-around_large">
+                        <p class="slds-text-heading_small">No production deployments in this period.</p>
+                        <p class="slds-text-body_small slds-text-color_weak">
+                            Metrics appear once a promotion or release reaches the production stage.
+                        </p>
+                    </div>
+                </template>
+
+                <button class="slds-button" onclick={handleToggleTables} aria-expanded={tablesExpanded}>{tableToggleLabel}</button>
+                <table class={tableClass} aria-label="Weekly delivery metrics">
+                    <thead>
+                        <tr class="slds-line-height_reset">
+                            <th scope="col">Week of</th>
+                            <th scope="col">Successful deploys</th>
+                            <th scope="col">Failed deploys</th>
+                            <th scope="col">Median lead time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template for:each={tableRows} for:item="row">
+                            <tr key={row.key}>
+                                <th scope="row">{row.label}</th>
+                                <td>{row.deployments}</td>
+                                <td>{row.failures}</td>
+                                <td>{row.leadTime}</td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </template>
+        </div>
+    </lightning-card>
+</template>

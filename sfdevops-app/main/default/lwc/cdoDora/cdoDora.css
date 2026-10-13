@@ -1,0 +1,92 @@
+.tiles {
+    list-style: none;
+}
+
+.tile {
+    height: 100%;
+    background: var(--slds-g-color-neutral-base-100, #ffffff);
+}
+
+.tile__value {
+    margin: 0.25rem 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.chart {
+    width: 100%;
+    height: auto;
+    display: block;
+    overflow: visible;
+}
+
+.chart__grid {
+    stroke: var(--slds-g-color-border-base-1, #e5e5e5);
+    stroke-width: 1;
+}
+
+.chart__baseline {
+    stroke: var(--slds-g-color-neutral-base-60, #939393);
+    stroke-width: 1;
+}
+
+.chart__axis {
+    fill: var(--slds-g-color-neutral-base-30, #444444);
+    font-size: 10px;
+}
+
+.chart__value {
+    fill: var(--slds-g-color-neutral-base-10, #181818);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.chart__hit {
+    fill: transparent;
+}
+
+.chart__bar:hover .chart__hit {
+    fill: var(--slds-g-color-neutral-base-95, #f3f3f3);
+}
+
+.chart__success {
+    fill: #2e844a;
+}
+
+.chart__failure {
+    fill: #ba0517;
+}
+
+.chart__lead {
+    fill: #0176d3;
+}
+
+.legend {
+    list-style: none;
+    font-size: 0.75rem;
+}
+
+.swatch {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 2px;
+    margin-right: 0.25rem;
+    vertical-align: middle;
+}
+
+.swatch_success {
+    background: #2e844a;
+}
+
+.swatch_failure {
+    background: #ba0517;
+    background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.35) 0 2px, transparent 2px 5px);
+}
+
+@media (forced-colors: active) {
+    .chart__success,
+    .chart__failure,
+    .chart__lead {
+        fill: CanvasText;
+    }
+}

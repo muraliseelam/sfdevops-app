@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSetGroup xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Developer role: create work items, commit, open pull requests and self-service promote. CDO_User + CDO_Developer.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>SF DevOps Developer Access</label>
+    <permissionSets>CDO_User</permissionSets>
+    <permissionSets>CDO_Developer</permissionSets>
+    <status>Updated</status>
+</PermissionSetGroup>

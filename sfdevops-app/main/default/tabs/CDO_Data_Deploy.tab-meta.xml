@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomTab xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Deploy records (not metadata) between environments with data sets.</description>
+    <flexiPage>CDO_Data_Deploy</flexiPage>
+    <label>Data Deploy</label>
+    <motif>Custom13: Box</motif>
+</CustomTab>

@@ -1,0 +1,142 @@
+<template>
+    <lightning-card title="Deployment steps" icon-name="standard:task">
+        <div slot="actions" class="slds-grid slds-gutters_x-small">
+            <div class="slds-col">
+                <lightning-button label="Add step" icon-name="utility:add" data-phase="Pre" onclick={handleAdd} disabled={working}></lightning-button>
+            </div>
+            <div class="slds-col">
+                <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh steps" title="Refresh steps"
+                    onclick={handleRefresh}></lightning-button-icon>
+            </div>
+        </div>
+        <div class="slds-card__body_inner">
+            <template lwc:if={hasRecord}>
+                <template lwc:if={error}>
+                    <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                        <span class="slds-assistive-text">Error</span>
+                        <h2>Could not load the steps: {error}</h2>
+                    </div>
+                </template>
+                <template lwc:if={summary}>
+                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_small" aria-live="polite">{summary}</p>
+                </template>
+                <template lwc:if={hasSteps}>
+                    <template for:each={phases} for:item="phase">
+                        <section key={phase.value} class="slds-m-bottom_medium" aria-labelledby={phase.headingId}>
+                            <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-m-bottom_x-small">
+                                <h3 id={phase.headingId} class="slds-text-heading_small">
+                                    {phase.label}
+                                    <span class="slds-text-body_small slds-text-color_weak slds-m-left_x-small">{phase.progressLabel}</span>
+                                </h3>
+                                <lightning-button variant="base" label="Add" icon-name="utility:add" data-phase={phase.value}
+                                    onclick={handleAdd} disabled={working}></lightning-button>
+                            </div>
+                            <template lwc:if={phase.isEmpty}>
+                                <p class="slds-text-body_small slds-text-color_weak">No {phase.label} steps.</p>
+                            </template>
+                            <ol class="slds-has-dividers_around-space">
+                                <template for:each={phase.steps} for:item="step">
+                                    <li key={step.Id} class="slds-item">
+                                        <div class="slds-grid slds-grid_vertical-align-start slds-wrap">
+                                            <span class="step-number slds-text-heading_small slds-m-right_small" aria-hidden="true">{step.position}</span>
+                                            <div class="slds-col slds-grow">
+                                                <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
+                                                    <span class="slds-text-heading_small slds-m-right_x-small">{step.Name}</span>
+                                                    <span class="slds-badge slds-badge_lightest slds-m-right_xx-small">{step.Type__c}</span>
+                                                    <span class={step.statusClass}>{step.statusLabel}</span>
+                                                </div>
+                                                <template lwc:if={step.Instructions__c}>
+                                                    <p class="slds-text-body_regular slds-m-top_xx-small step-instructions">{step.Instructions__c}</p>
+                                                </template>
+                                                <template lwc:if={step.completedLabel}>
+                                                    <p class="slds-text-body_small slds-text-color_weak slds-m-top_xx-small">{step.completedLabel}</p>
+                                                </template>
+                                            </div>
+                                            <div class="slds-button-group" role="group" aria-label="Step actions">
+                                                <lightning-button-icon icon-name="utility:arrowup" variant="border-filled" size="small"
+                                                    alternative-text={step.moveUpLabel} title={step.moveUpLabel} data-id={step.Id}
+                                                    onclick={handleMoveUp} disabled={step.moveUpDisabled}></lightning-button-icon>
+                                                <lightning-button-icon icon-name="utility:arrowdown" variant="border-filled" size="small"
+                                                    alternative-text={step.moveDownLabel} title={step.moveDownLabel} data-id={step.Id}
+                                                    onclick={handleMoveDown} disabled={step.moveDownDisabled}></lightning-button-icon>
+                                                <template lwc:if={step.isDone}>
+                                                    <lightning-button-icon icon-name="utility:preview" variant="border-filled" size="small"
+                                                        alternative-text={step.editLabel} title={step.editLabel} data-id={step.Id}
+                                                        onclick={handleEdit} disabled={working}></lightning-button-icon>
+                                                </template>
+                                                <template lwc:else>
+                                                    <lightning-button-icon icon-name="utility:edit" variant="border-filled" size="small"
+                                                        alternative-text={step.editLabel} title={step.editLabel} data-id={step.Id}
+                                                        onclick={handleEdit} disabled={working}></lightning-button-icon>
+                                                    <lightning-button-icon icon-name="utility:check" variant="border-filled" size="small"
+                                                        alternative-text={step.completeLabel} title={step.completeLabel} data-id={step.Id}
+                                                        onclick={handleComplete} disabled={working}></lightning-button-icon>
+                                                    <lightning-button-icon icon-name="utility:delete" variant="border-filled" size="small"
+                                                        alternative-text={step.deleteLabel} title={step.deleteLabel} data-id={step.Id}
+                                                        onclick={handleDelete} disabled={working}></lightning-button-icon>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </li>
+                                </template>
+                            </ol>
+                        </section>
+                    </template>
+                </template>
+                <template lwc:else>
+                    <p class="slds-text-color_weak">
+                        No deployment steps. Add the manual work that has to happen before, during or after this work item deploys.
+                    </p>
+                </template>
+                <template lwc:if={working}>
+                    <lightning-spinner alternative-text="Saving" size="small"></lightning-spinner>
+                </template>
+            </template>
+            <template lwc:else>
+                <p class="slds-text-color_weak">Place this component on a Work Item record page to manage its deployment steps.</p>
+            </template>
+        </div>
+    </lightning-card>
+
+    <template lwc:if={isEditing}>
+        <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="step-modal-heading"
+            class="slds-modal slds-fade-in-open" onkeydown={handleModalKeydown}>
+            <div class="slds-modal__container">
+                <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" title="Close" onclick={handleCloseModal}>
+                    <lightning-icon icon-name="utility:close" size="small" variant="inverse" alternative-text="Close"></lightning-icon>
+                </button>
+                <div class="slds-modal__header">
+                    <h1 id="step-modal-heading" class="slds-modal__title">{modalTitle}</h1>
+                </div>
+                <div class="slds-modal__content slds-p-around_medium step-form">
+                    <lightning-input label="Name" data-field="Name" value={editing.Name} onchange={handleFieldChange}
+                        max-length="80" required></lightning-input>
+                    <div class="slds-grid slds-gutters_small slds-m-top_x-small">
+                        <div class="slds-col">
+                            <lightning-combobox label="Phase" data-field="Phase__c" value={editing.Phase__c} options={phaseOptions}
+                                onchange={handleFieldChange} required></lightning-combobox>
+                        </div>
+                        <div class="slds-col">
+                            <lightning-combobox label="Type" data-field="Type__c" value={editing.Type__c} options={typeOptions}
+                                onchange={handleFieldChange} required></lightning-combobox>
+                        </div>
+                        <template lwc:if={showStatusPicker}>
+                            <div class="slds-col">
+                                <lightning-combobox label="Status" data-field="Status__c" value={editing.Status__c} options={statusOptions}
+                                    onchange={handleFieldChange}></lightning-combobox>
+                            </div>
+                        </template>
+                    </div>
+                    <lightning-textarea class="slds-m-top_x-small" label="Instructions" data-field="Instructions__c"
+                        value={editing.Instructions__c} onchange={handleFieldChange}
+                        field-level-help="What to do, where, and how to check it worked."></lightning-textarea>
+                </div>
+                <div class="slds-modal__footer">
+                    <button class="slds-button slds-button_neutral" onclick={handleCloseModal}>Cancel</button>
+                    <button class="slds-button slds-button_brand" onclick={handleSave} disabled={working}>Save</button>
+                </div>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open" role="presentation"></div>
+    </template>
+</template>

@@ -1,0 +1,10 @@
+.sf/
+.sfdx/
+node_modules/
+coverage/
+__pycache__/
+*.log
+.localdevserver/
+
+# local deploy marker written by the metadata generator
+.objects-deployed

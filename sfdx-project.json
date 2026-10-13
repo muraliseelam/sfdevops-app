@@ -1,0 +1,16 @@
+{
+  "packageDirectories": [
+    {
+      "path": "sfdevops-app",
+      "default": true,
+      "package": "SF DevOps",
+      "versionName": "v0.1",
+      "versionNumber": "0.1.0.NEXT",
+      "versionDescription": "SF DevOps hub: the Salesforce side of the open-source Salesforce DevOps delivery platform."
+    }
+  ],
+  "name": "sfdevops-app-hub",
+  "namespace": "",
+  "sfdcLoginUrl": "https://login.salesforce.com",
+  "sourceApiVersion": "66.0"
+}

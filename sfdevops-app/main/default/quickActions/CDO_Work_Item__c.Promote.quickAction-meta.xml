@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<QuickAction xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- Deploy after the cdoPromoteAction LWC and BEFORE the Work Item layout that references
+         this action: a layout cannot reference a quick action created in the same deploy. -->
+    <actionSubtype>ScreenAction</actionSubtype>
+    <description>Promote this work item to its next stage.</description>
+    <label>Promote</label>
+    <lightningWebComponent>cdoPromoteAction</lightningWebComponent>
+    <optionsCreateFeedItem>false</optionsCreateFeedItem>
+    <type>LightningWebComponent</type>
+</QuickAction>

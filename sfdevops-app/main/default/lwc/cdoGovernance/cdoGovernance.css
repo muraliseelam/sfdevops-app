@@ -1,0 +1,16 @@
+.audit-table {
+    max-height: 32rem;
+    overflow-y: auto;
+}
+
+.event-details {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: var(--slds-g-font-family-monospace, monospace);
+    font-size: 0.75rem;
+    background: var(--slds-g-color-neutral-base-95, #f3f3f3);
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+    max-height: 20rem;
+    overflow-y: auto;
+}

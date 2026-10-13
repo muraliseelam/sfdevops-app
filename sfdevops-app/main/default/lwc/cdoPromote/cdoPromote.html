@@ -1,0 +1,244 @@
+<template>
+    <lightning-card title={cardTitle} icon-name="standard:product_transfer">
+        <div slot="actions">
+            <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh" title="Refresh" onclick={handleRefresh}></lightning-button-icon>
+        </div>
+        <div class="slds-card__body_inner">
+            <!-- Builder: choose a stage, select candidates, promote -->
+            <template lwc:if={isBuilderMode}>
+                <template lwc:if={showStagePicker}>
+                    <template lwc:if={hasStages}>
+                        <lightning-combobox
+                            name="targetStage"
+                            label="Promote into stage"
+                            placeholder="Choose a target stage"
+                            value={selectedStageId}
+                            options={stageOptions}
+                            onchange={handleStageChange}
+                            class="slds-m-bottom_small"
+                        ></lightning-combobox>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-color_weak slds-m-bottom_small">No stages configured yet — run seed-pipeline.py.</p>
+                    </template>
+                </template>
+
+                <template lwc:if={noStageChosen}>
+                    <template lwc:if={hasStages}>
+                        <p class="slds-text-color_weak">Choose the stage to promote into to see the work items that can move there.</p>
+                    </template>
+                </template>
+                <template lwc:elseif={productionMessage}>
+                    <div class="slds-box slds-box_x-small slds-theme_shade">
+                        <p>{productionMessage}</p>
+                    </div>
+                </template>
+                <template lwc:elseif={candidateError}>
+                    <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                        <span class="slds-assistive-text">Error</span>
+                        <h2>Could not load the candidates: {candidateError}</h2>
+                    </div>
+                </template>
+                <template lwc:else>
+                    <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_x-small">{candidateSourceLabel}</p>
+                    <template lwc:if={showEntryGateNote}>
+                        <div class="slds-box slds-box_x-small slds-theme_shade slds-m-bottom_small">
+                            <p class="slds-text-body_small">
+                                <lightning-icon icon-name="utility:lock" size="xx-small" alternative-text="Gate" class="slds-m-right_xx-small"></lightning-icon>
+                                The entry stage needs an approved pull request, or the CDO_Approve_Entry permission, for each work item.
+                            </p>
+                        </div>
+                    </template>
+
+                    <template lwc:if={hasCandidates}>
+                        <div class="slds-m-bottom_small">
+                            <lightning-datatable
+                                key-field="workItemId"
+                                data={candidates}
+                                columns={candidateColumns}
+                                selected-rows={selectedIds}
+                                onrowselection={handleRowSelection}
+                                aria-label="Work items that can be promoted"
+                            ></lightning-datatable>
+                        </div>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-m-vertical_small">No work items are ready to promote into this stage.</p>
+                    </template>
+
+                    <template lwc:if={hasIneligible}>
+                        <section class="slds-m-bottom_small" aria-label="Work items that cannot be promoted yet">
+                            <h3 class="slds-text-title_caps slds-m-bottom_xx-small">Not eligible yet</h3>
+                            <ul class="slds-list_dotted">
+                                <template for:each={ineligible} for:item="c">
+                                    <li key={c.workItemId}>
+                                        <a href={c.url}>{c.name}</a> {c.subject}: <span class="slds-text-color_weak">{c.reason}</span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </section>
+                    </template>
+
+                    <template lwc:if={hasCandidates}>
+                        <lightning-accordion allow-multiple-sections-open active-section-name="">
+                            <lightning-accordion-section name="options" label="Deployment options">
+                                <div class="slds-grid slds-wrap slds-gutters_small">
+                                    <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                                        <lightning-combobox
+                                            name="testLevel"
+                                            label="Test level"
+                                            value={testLevel}
+                                            options={testLevelOptions}
+                                            onchange={handleTestLevelChange}
+                                        ></lightning-combobox>
+                                    </div>
+                                    <template lwc:if={showSpecifiedTests}>
+                                        <div class="slds-col slds-size_1-of-1 slds-medium-size_1-of-2">
+                                            <lightning-input
+                                                name="specifiedTests"
+                                                label="Specified tests"
+                                                field-level-help="Comma-separated Apex test classes"
+                                                value={specifiedTests}
+                                                onchange={handleSpecifiedTestsChange}
+                                            ></lightning-input>
+                                        </div>
+                                    </template>
+                                    <div class="slds-col slds-size_1-of-1 slds-m-top_small">
+                                        <lightning-input
+                                            type="checkbox"
+                                            name="checkOnly"
+                                            label="Validate only (check-only deploy, no merge)"
+                                            checked={checkOnly}
+                                            onchange={handleCheckOnlyChange}
+                                        ></lightning-input>
+                                    </div>
+                                </div>
+                            </lightning-accordion-section>
+                        </lightning-accordion>
+
+                        <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-m-top_small slds-wrap">
+                            <p class="slds-text-body_small" aria-live="polite">{selectionLabel}</p>
+                            <div>
+                                <lightning-button
+                                    label="Promote"
+                                    title="Create a Draft promotion without deploying"
+                                    onclick={handlePromote}
+                                    disabled={promoteDisabled}
+                                    class="slds-m-right_x-small"
+                                ></lightning-button>
+                                <lightning-button
+                                    variant="brand"
+                                    label="Promote &amp; Deploy"
+                                    title="Create the promotion and queue its deployment"
+                                    onclick={handlePromoteAndDeploy}
+                                    disabled={promoteDisabled}
+                                ></lightning-button>
+                            </div>
+                        </div>
+                    </template>
+                </template>
+            </template>
+
+            <template lwc:if={working}>
+                <lightning-spinner alternative-text="Working" size="small"></lightning-spinner>
+            </template>
+
+            <!-- Promotion detail: on the record page, or the promotion just created -->
+            <template lwc:if={promotionError}>
+                <div class="slds-notify slds-notify_alert slds-alert_error slds-m-top_small" role="alert">
+                    <span class="slds-assistive-text">Error</span>
+                    <h2>Could not load the promotion: {promotionError}</h2>
+                </div>
+            </template>
+            <template lwc:if={hasPromotion}>
+                <section class="slds-m-top_medium" aria-label="Promotion status">
+                    <div class="slds-grid slds-grid_vertical-align-center slds-wrap slds-m-bottom_x-small">
+                        <template lwc:if={isBuilderMode}>
+                            <h3 class="slds-text-heading_small slds-m-right_small">
+                                <a href={promotionUrl} onclick={handleOpenPromotion}>{promotionView.name}</a>
+                            </h3>
+                        </template>
+                        <span class={promotionStatusClass}>{promotionStatusLabel}</span>
+                        <span class="slds-m-left_small slds-text-body_regular">{promotionRoute}</span>
+                        <template lwc:if={promotionView.runUrl}>
+                            <a href={promotionView.runUrl} target="_blank" rel="noopener noreferrer" class="slds-m-left_small">
+                                Workflow run<span class="slds-assistive-text"> (opens GitHub)</span>
+                            </a>
+                        </template>
+                    </div>
+                    <template lwc:if={showRunPending}>
+                        <p class="slds-text-body_small slds-text-color_weak">
+                            Dispatched. Waiting for the workflow to report that it started.
+                        </p>
+                    </template>
+                    <template lwc:if={promotionView.message}>
+                        <p class="slds-text-body_small slds-m-bottom_x-small">{promotionView.message}</p>
+                    </template>
+
+                    <div class="slds-m-vertical_small">
+                        <lightning-button
+                            variant="brand"
+                            label="Deploy"
+                            icon-name="utility:upload"
+                            onclick={handleDeploy}
+                            disabled={deployDisabled}
+                            class="slds-m-right_x-small"
+                        ></lightning-button>
+                        <lightning-button
+                            label="Cancel promotion"
+                            icon-name="utility:close"
+                            onclick={handleCancel}
+                            disabled={cancelDisabled}
+                        ></lightning-button>
+                    </div>
+
+                    <h3 class="slds-text-title_caps slds-m-top_small slds-m-bottom_xx-small">Work items in this promotion</h3>
+                    <template lwc:if={hasJunctionRows}>
+                        <lightning-datatable
+                            key-field="id"
+                            data={junctionRows}
+                            columns={junctionColumns}
+                            hide-checkbox-column
+                            aria-label="Work items in this promotion"
+                        ></lightning-datatable>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-color_error">
+                            This promotion has no work items. It cannot be resolved; cancel it and promote again.
+                        </p>
+                    </template>
+
+                    <h3 class="slds-text-title_caps slds-m-top_medium slds-m-bottom_xx-small">Deployments</h3>
+                    <template lwc:if={hasDeployments}>
+                        <lightning-datatable
+                            key-field="id"
+                            data={deploymentRows}
+                            columns={deploymentColumns}
+                            hide-checkbox-column
+                            aria-label="Deployments of this promotion"
+                        ></lightning-datatable>
+                    </template>
+                    <template lwc:else>
+                        <p class="slds-text-body_small slds-text-color_weak">No deployments yet.</p>
+                    </template>
+
+                    <template lwc:if={hasApprovals}>
+                        <h3 class="slds-text-title_caps slds-m-top_medium slds-m-bottom_xx-small">Approvals</h3>
+                        <ul>
+                            <template for:each={approvals} for:item="a">
+                                <li key={a.Id} class="slds-m-bottom_xx-small">
+                                    <span class={a.decisionClass}>{a.decisionLabel}</span>
+                                    <span class="slds-m-left_x-small">{a.Approver__c}</span>
+                                    <span class="slds-m-left_x-small slds-text-body_small slds-text-color_weak">{a.whenLabel}</span>
+                                    <template lwc:if={a.Comments__c}>
+                                        <p class="slds-text-body_small">{a.Comments__c}</p>
+                                    </template>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+                </section>
+            </template>
+        </div>
+    </lightning-card>
+</template>

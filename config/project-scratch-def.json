@@ -1,0 +1,10 @@
+{
+  "orgName": "SF DevOps Hub",
+  "edition": "Developer",
+  "hasSampleData": false,
+  "settings": {
+    "lightningExperienceSettings": {
+      "enableS1DesktopEnabled": true
+    }
+  }
+}

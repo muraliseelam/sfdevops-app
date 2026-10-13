@@ -1,0 +1,53 @@
+.pipeline {
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    align-items: stretch;
+    list-style: none;
+    margin: 0;
+}
+
+.pipeline__column {
+    display: flex;
+    align-items: stretch;
+    flex: 0 0 auto;
+}
+
+.pipeline__connector {
+    display: flex;
+    align-items: center;
+    padding: 0 0.25rem;
+    color: var(--slds-g-color-neutral-base-50, #747474);
+}
+
+.stage-card {
+    width: 17.5rem;
+    display: flex;
+    flex-direction: column;
+    background: var(--slds-g-color-neutral-base-100, #ffffff);
+    margin-right: 0.25rem;
+}
+
+.stage-card_backlog {
+    width: 12rem;
+    background: var(--slds-g-color-neutral-base-95, #f3f3f3);
+}
+
+.stage-card footer {
+    margin-top: auto;
+    padding-top: 0.5rem;
+}
+
+.stage-card__counts dd {
+    font-variant-numeric: tabular-nums;
+}
+
+.stage-card__list {
+    max-height: 12rem;
+    overflow-y: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pipeline {
+        scroll-behavior: auto;
+    }
+}

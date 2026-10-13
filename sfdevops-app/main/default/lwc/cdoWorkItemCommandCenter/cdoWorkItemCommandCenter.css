@@ -1,0 +1,19 @@
+.action-bar {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.timeline {
+    list-style: none;
+    border-left: 2px solid var(--slds-g-color-border-base-1, #e5e5e5);
+    padding-left: 0.75rem;
+    margin-left: 0.5rem;
+}
+
+.timeline__item {
+    position: relative;
+}
+
+details summary {
+    cursor: pointer;
+}

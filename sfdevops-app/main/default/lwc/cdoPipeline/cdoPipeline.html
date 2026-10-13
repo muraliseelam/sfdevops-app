@@ -1,0 +1,275 @@
+<template>
+    <lightning-card title="Pipeline" icon-name="standard:flow">
+        <div slot="actions" class="slds-grid slds-grid_vertical-align-end slds-gutters_x-small">
+            <template lwc:if={showProjectPicker}>
+                <div class="slds-col">
+                    <lightning-combobox
+                        name="project"
+                        label="Project"
+                        variant="label-hidden"
+                        placeholder="Choose a project"
+                        value={selectedProjectId}
+                        options={projectOptions}
+                        onchange={handleProjectChange}
+                    ></lightning-combobox>
+                </div>
+            </template>
+            <div class="slds-col">
+                <lightning-button-icon
+                    icon-name="utility:refresh"
+                    alternative-text="Refresh pipeline"
+                    title="Refresh pipeline"
+                    onclick={handleRefresh}
+                ></lightning-button-icon>
+            </div>
+        </div>
+
+        <div class="slds-card__body_inner">
+            <template lwc:if={isLoading}>
+                <div class="slds-is-relative slds-p-around_large">
+                    <lightning-spinner alternative-text="Loading pipeline" size="small"></lightning-spinner>
+                </div>
+            </template>
+            <template lwc:elseif={error}>
+                <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
+                    <span class="slds-assistive-text">Error</span>
+                    <h2>Could not load the pipeline: {error}</h2>
+                </div>
+            </template>
+            <template lwc:elseif={emptyMessage}>
+                <div class="slds-text-align_center slds-p-around_large">
+                    <lightning-icon icon-name="utility:flow" size="medium" alternative-text=""></lightning-icon>
+                    <p class="slds-text-heading_small slds-m-top_small">{emptyMessage}</p>
+                </div>
+            </template>
+            <template lwc:elseif={hasPipeline}>
+                <div class="slds-grid slds-wrap slds-grid_vertical-align-center slds-m-bottom_small">
+                    <h2 class="slds-text-heading_small slds-m-right_small">{projectName}</h2>
+                    <template lwc:if={repoUrl}>
+                        <a href={repoUrl} target="_blank" rel="noopener noreferrer" class="slds-text-body_small">
+                            {repoLabel}
+                            <span class="slds-assistive-text">(opens GitHub in a new tab)</span>
+                        </a>
+                    </template>
+                    <template lwc:if={isPolling}>
+                        <span class="slds-text-body_small slds-text-color_weak slds-m-left_small">
+                            Refreshing every 20 seconds while promotions are in flight
+                        </span>
+                    </template>
+                </div>
+
+                <ol class="pipeline slds-grid slds-nowrap" aria-label="Pipeline stages, in promotion order">
+                    <li class="pipeline__column">
+                        <article class="stage-card stage-card_backlog slds-box slds-box_small" aria-labelledby="backlog-heading">
+                            <header class="slds-m-bottom_x-small">
+                                <h3 id="backlog-heading" class="slds-text-heading_small">Backlog</h3>
+                                <p class="slds-text-body_small slds-text-color_weak">Not yet in the pipeline</p>
+                            </header>
+                            <dl class="slds-grid slds-gutters_xx-small stage-card__counts">
+                                <div class="slds-col">
+                                    <dt class="slds-text-title">Open</dt>
+                                    <dd class="slds-text-heading_medium">{backlogCount}</dd>
+                                </div>
+                                <div class="slds-col">
+                                    <dt class="slds-text-title">Approved</dt>
+                                    <dd class="slds-text-heading_medium">{approvedBacklogCount}</dd>
+                                </div>
+                            </dl>
+                            <p class="slds-text-body_small slds-m-top_x-small">
+                                Approved work items can be promoted into the entry stage.
+                            </p>
+                            <a href={workItemListUrl} onclick={handleOpenWorkItems} class="slds-text-body_small">View work items</a>
+                        </article>
+                    </li>
+
+                    <template for:each={stages} for:item="stage">
+                        <li key={stage.key} class="pipeline__column">
+                            <div class="pipeline__connector" aria-hidden="true">
+                                <lightning-icon icon-name="utility:chevronright" size="x-small"></lightning-icon>
+                            </div>
+                            <article class="stage-card slds-box slds-box_small" aria-labelledby={stage.headingId}>
+                                <header class="slds-m-bottom_x-small">
+                                    <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-start">
+                                        <h3 id={stage.headingId} class="slds-text-heading_small slds-truncate">
+                                            <a href={stage.stageUrl} data-id={stage.stageId} data-object="CDO_Stage__c" onclick={handleNavigate}>
+                                                {stage.name}
+                                            </a>
+                                        </h3>
+                                        <span class="slds-text-body_small slds-text-color_weak">#{stage.position}</span>
+                                    </div>
+                                    <div class="slds-m-top_xx-small">
+                                        <template lwc:if={stage.isEntry}>
+                                            <span class="slds-badge slds-badge_inverse slds-m-right_xx-small">Entry</span>
+                                        </template>
+                                        <template lwc:if={stage.isProduction}>
+                                            <span class="slds-badge slds-theme_alt-inverse slds-m-right_xx-small">Production</span>
+                                        </template>
+                                        <template lwc:if={stage.gateLabel}>
+                                            <span class="slds-badge slds-badge_lightest slds-m-right_xx-small" title="Gate type">{stage.gateLabel}</span>
+                                        </template>
+                                    </div>
+                                    <p class="slds-text-body_small slds-text-color_weak slds-m-top_xx-small">
+                                        <template lwc:if={stage.pipelineKey}>Key {stage.pipelineKey}</template>
+                                        <template lwc:if={stage.branch}> · branch {stage.branch}</template>
+                                        <template lwc:if={stage.coverageLabel}> · coverage floor {stage.coverageLabel}</template>
+                                    </p>
+                                </header>
+
+                                <section class="slds-m-bottom_x-small" aria-label="Environment">
+                                    <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
+                                        <template lwc:if={stage.environmentId}>
+                                            <a href={stage.environmentUrl} data-id={stage.environmentId} data-object="CDO_Environment__c"
+                                                onclick={handleNavigate} class="slds-m-right_x-small slds-truncate">{stage.environmentName}</a>
+                                        </template>
+                                        <template lwc:else>
+                                            <span class="slds-text-color_weak slds-m-right_x-small">No environment</span>
+                                        </template>
+                                        <span class={stage.healthClass}>{stage.healthLabel}</span>
+                                    </div>
+                                    <template lwc:if={stage.lastDeployedLabel}>
+                                        <p class="slds-text-body_small slds-text-color_weak" title={stage.lastDeployedTitle}>
+                                            Last deployed {stage.lastDeployedLabel}
+                                        </p>
+                                    </template>
+                                </section>
+
+                                <dl class="slds-grid slds-gutters_xx-small stage-card__counts">
+                                    <div class="slds-col">
+                                        <dt class="slds-text-title">Work items</dt>
+                                        <dd class="slds-text-heading_medium">{stage.workItemCount}</dd>
+                                    </div>
+                                    <div class="slds-col">
+                                        <dt class="slds-text-title">Blocked</dt>
+                                        <dd class="slds-text-heading_medium">{stage.blockedCount}</dd>
+                                    </div>
+                                    <div class="slds-col">
+                                        <dt class="slds-text-title">Queued</dt>
+                                        <dd class="slds-text-heading_medium">{stage.queuedCount}</dd>
+                                    </div>
+                                </dl>
+
+                                <template lwc:if={stage.hasWorkItems}>
+                                    <ul class="slds-m-top_x-small stage-card__list" aria-label="Work items in this stage">
+                                        <template for:each={stage.workItems} for:item="wi">
+                                            <li key={wi.id} class="slds-grid slds-grid_vertical-align-center slds-m-bottom_xxx-small">
+                                                <a href={wi.url} data-id={wi.id} data-object="CDO_Work_Item__c" onclick={handleNavigate}
+                                                    title={wi.title} class="slds-truncate slds-m-right_xx-small">{wi.name}</a>
+                                                <span class="slds-truncate slds-text-body_small slds-col slds-grow" title={wi.subject}>{wi.subject}</span>
+                                                <span class={wi.statusClass}>{wi.statusLabel}</span>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                    <template lwc:if={stage.moreWorkItems}>
+                                        <p class="slds-text-body_small slds-text-color_weak">and {stage.moreWorkItems} more</p>
+                                    </template>
+                                </template>
+
+                                <section class="slds-m-top_small" aria-label="In-flight promotions">
+                                    <h4 class="slds-text-title_caps slds-m-bottom_xx-small">In flight</h4>
+                                    <template lwc:if={stage.hasInFlight}>
+                                        <ul>
+                                            <template for:each={stage.inFlight} for:item="p">
+                                                <li key={p.id} class="slds-m-bottom_xx-small">
+                                                    <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
+                                                        <a href={p.url} data-id={p.id} data-object="CDO_Promotion__c" onclick={handleNavigate}
+                                                            class="slds-m-right_xx-small">{p.name}</a>
+                                                        <span class={p.statusClass}>{p.statusLabel}</span>
+                                                        <template lwc:if={p.runUrl}>
+                                                            <a href={p.runUrl} target="_blank" rel="noopener noreferrer" class="slds-m-left_xx-small slds-text-body_small">
+                                                                Run<span class="slds-assistive-text"> for {p.name} (opens GitHub)</span>
+                                                            </a>
+                                                        </template>
+                                                    </div>
+                                                    <p class="slds-text-body_small slds-text-color_weak slds-truncate" title={p.workItemKeys}>
+                                                        {p.workItemKeys} · {p.whenLabel}
+                                                    </p>
+                                                    <template lwc:if={p.unconfirmed}>
+                                                        <p class="slds-text-body_small slds-text-color_weak">Waiting for the workflow to report that it started</p>
+                                                    </template>
+                                                </li>
+                                            </template>
+                                        </ul>
+                                    </template>
+                                    <template lwc:else>
+                                        <p class="slds-text-body_small slds-text-color_weak">Nothing in flight</p>
+                                    </template>
+                                </section>
+
+                                <section class="slds-m-top_small" aria-label="Latest deployment">
+                                    <h4 class="slds-text-title_caps slds-m-bottom_xx-small">Latest deployment</h4>
+                                    <template lwc:if={stage.hasLatest}>
+                                        <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
+                                            <a href={stage.latest.url} data-id={stage.latest.id} data-object="CDO_Deployment__c"
+                                                onclick={handleNavigate} class="slds-m-right_xx-small">{stage.latest.name}</a>
+                                            <span class={stage.latest.statusClass}>{stage.latest.statusLabel}</span>
+                                        </div>
+                                        <p class="slds-text-body_small slds-text-color_weak" title={stage.latest.whenTitle}>
+                                            {stage.latest.kindLabel}
+                                            <template lwc:if={stage.latest.subject}> · {stage.latest.subject}</template>
+                                            · {stage.latest.whenLabel}
+                                            <template lwc:if={stage.latest.coverageLabel}> · coverage {stage.latest.coverageLabel}</template>
+                                        </p>
+                                    </template>
+                                    <template lwc:else>
+                                        <p class="slds-text-body_small slds-text-color_weak">No deployments yet</p>
+                                    </template>
+                                </section>
+
+                                <footer class="slds-m-top_small">
+                                    <template lwc:if={stage.isProduction}>
+                                        <p class="slds-text-body_small slds-text-color_weak slds-m-bottom_xx-small">
+                                            Production ships through a release.
+                                        </p>
+                                        <a href="/lightning/n/CDO_Release_Board" onclick={handleOpenReleaseBoard}>Open the release board</a>
+                                    </template>
+                                    <template lwc:else>
+                                        <lightning-button
+                                            label="Promote"
+                                            title={stage.promoteLabel}
+                                            icon-name="utility:forward"
+                                            data-id={stage.stageId}
+                                            onclick={handleOpenPromote}
+                                            stretch
+                                        ></lightning-button>
+                                    </template>
+                                </footer>
+                            </article>
+                        </li>
+                    </template>
+                </ol>
+            </template>
+        </div>
+    </lightning-card>
+
+    <template lwc:if={promoteStage}>
+        <section
+            role="dialog"
+            tabindex="-1"
+            aria-modal="true"
+            aria-labelledby="promote-modal-heading"
+            class="slds-modal slds-fade-in-open slds-modal_medium"
+            onkeydown={handleModalKeydown}
+        >
+            <div class="slds-modal__container">
+                <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" title="Close" onclick={handleClosePromote}>
+                    <lightning-icon icon-name="utility:close" size="small" variant="inverse" alternative-text="Close"></lightning-icon>
+                </button>
+                <div class="slds-modal__header">
+                    <h1 id="promote-modal-heading" class="slds-modal__title slds-hyphenate">{promoteModalTitle}</h1>
+                </div>
+                <div class="slds-modal__content slds-p-around_medium">
+                    <c-cdo-promote
+                        target-stage-id={promoteStage.stageId}
+                        project-id={selectedProjectId}
+                        hide-stage-picker
+                        onpromoted={handlePromoted}
+                    ></c-cdo-promote>
+                </div>
+                <div class="slds-modal__footer">
+                    <button class="slds-button slds-button_neutral" onclick={handleClosePromote}>Close</button>
+                </div>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open" role="presentation"></div>
+    </template>
+</template>

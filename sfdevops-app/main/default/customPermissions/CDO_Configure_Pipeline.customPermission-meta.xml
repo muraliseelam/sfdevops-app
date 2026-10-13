@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomPermission xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Change projects, stages, environments and SF DevOps Settings.</description>
+    <isLicensed>false</isLicensed>
+    <label>Configure Pipeline</label>
+</CustomPermission>
