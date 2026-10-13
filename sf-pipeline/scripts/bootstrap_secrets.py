@@ -46,6 +46,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
 import plan as planlib  # noqa: E402
 
+REVISION = "rev 2026-10-13.3"
 EXT_CRED = "GitHub_API_Credential"
 PRINCIPAL = "GitHub_PAT"
 API = "v66.0"
@@ -74,13 +75,15 @@ def exe(name):
     path = shutil.which(name) or shutil.which(name + ".cmd") or shutil.which(name + ".exe")
     if path:
         return path
+    candidates = []
     if os.name == "nt":
-        appdata = os.environ.get("APPDATA", "")
-        local = os.environ.get("LOCALAPPDATA", "")
+        home = os.path.expanduser("~")
+        appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        local = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
         program_files = [os.environ.get("ProgramFiles", r"C:\Program Files"),
                          os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
         candidates = {
-            "sf": [os.path.join(appdata, "npm", "sf.cmd")] +
+            "sf": [os.path.join(appdata, "npm", "sf.cmd"), os.path.join(home, "AppData", "Roaming", "npm", "sf.cmd")] +
                   [os.path.join(pf, "sf", "bin", "sf.cmd") for pf in program_files],
             "gh": [os.path.join(pf, "GitHub CLI", "gh.exe") for pf in program_files] +
                   [os.path.join(local, "Programs", "GitHub CLI", "gh.exe")],
@@ -89,7 +92,21 @@ def exe(name):
         for c in candidates:
             if c and os.path.isfile(c):
                 return c
-    raise Fail(f"`{name}` is not installed or not on PATH")
+        # Last resort: ask Windows itself.
+        try:
+            found = subprocess.run(["where.exe", name], capture_output=True, text=True).stdout.split()
+            for f in found:
+                if f.lower().endswith((".cmd", ".exe")) and os.path.isfile(f):
+                    return f
+        except OSError:
+            pass
+    checked = "\n".join(f"    {'found ' if os.path.isfile(c) else 'missing'}  {c}" for c in candidates) or "    (none)"
+    raise Fail(f"`{name}` is not installed or not on PATH.\n"
+               f"  script: {os.path.abspath(__file__)} ({REVISION})\n"
+               f"  python: {sys.executable}\n"
+               f"  user home: {os.path.expanduser('~')}   APPDATA: {os.environ.get('APPDATA', '<unset>')}\n"
+               f"  checked:\n{checked}\n"
+               f"  PATH has {len(os.environ.get('PATH', '').split(os.pathsep))} entries")
 
 
 def widen_path():
@@ -245,6 +262,7 @@ class Bootstrap:
         login, uid = self.gh_user()
         reviewer_login = self.a.reviewer or login
         reviewer_id = uid if reviewer_login == login else json.loads(run([self.gh, "api", f"users/{reviewer_login}"]))["id"]
+        log(f"bootstrap_secrets.py {REVISION}  (sf: {self.sf}  gh: {self.gh})")
         log(f"Repository: {repo}   GitHub user: {login}   production reviewer: {reviewer_login}")
         keys = {}
         if self.a.jwt:
