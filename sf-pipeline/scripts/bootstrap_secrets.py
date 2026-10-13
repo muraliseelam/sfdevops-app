@@ -69,15 +69,47 @@ def run(cmd, stdin=None, check=True):
 
 
 def exe(name):
+    """Find a CLI on PATH, then in the standard Windows install locations, because a terminal
+    started with a trimmed PATH (an IDE panel, a fresh PowerShell) often lacks them."""
     path = shutil.which(name) or shutil.which(name + ".cmd") or shutil.which(name + ".exe")
-    if not path:
-        raise Fail(f"`{name}` is not installed or not on PATH")
-    return path
+    if path:
+        return path
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "")
+        local = os.environ.get("LOCALAPPDATA", "")
+        program_files = [os.environ.get("ProgramFiles", r"C:\Program Files"),
+                         os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
+        candidates = {
+            "sf": [os.path.join(appdata, "npm", "sf.cmd")] +
+                  [os.path.join(pf, "sf", "bin", "sf.cmd") for pf in program_files],
+            "gh": [os.path.join(pf, "GitHub CLI", "gh.exe") for pf in program_files] +
+                  [os.path.join(local, "Programs", "GitHub CLI", "gh.exe")],
+            "openssl": [os.path.join(pf, "Git", "usr", "bin", "openssl.exe") for pf in program_files],
+        }.get(name, [])
+        for c in candidates:
+            if c and os.path.isfile(c):
+                return c
+    raise Fail(f"`{name}` is not installed or not on PATH")
+
+
+def widen_path():
+    """sf.cmd needs node; a trimmed PATH has neither. Add the standard Windows tool folders to the
+    PATH the child processes inherit (this process only; nothing is changed on the machine)."""
+    if os.name != "nt":
+        return
+    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    extra = [os.path.join(pf, "nodejs"), os.path.join(os.environ.get("APPDATA", ""), "npm"),
+             os.path.join(pf, "GitHub CLI"), os.path.join(pf, "Git", "cmd"), os.path.join(pf, "Git", "usr", "bin")]
+    current = os.environ.get("PATH", "").split(os.pathsep)
+    add = [d for d in extra if d and os.path.isdir(d) and d not in current]
+    if add:
+        os.environ["PATH"] = os.pathsep.join(add + current)
 
 
 class Bootstrap:
     def __init__(self, args):
         self.a = args
+        widen_path()
         self.sf = exe("sf")
         self.gh = exe("gh")
         self.set_count = 0
