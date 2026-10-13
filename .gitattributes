@@ -1,0 +1,7 @@
+# Keep LF everywhere so bash and Python scripts run on Linux runners exactly as committed,
+# whatever core.autocrlf a contributor's machine uses.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.drawio text eol=lf
