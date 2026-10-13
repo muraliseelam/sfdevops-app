@@ -14,6 +14,12 @@ write_stub "$BIN" sf <<'EOF'
 case "${1:-} ${2:-}" in
   "--version ") echo "@salesforce/cli/$(cat "$STUB/sf_version") linux-x64 node-v22.11.0" ;;
   "plugins ") [[ -s "$STUB/sgd_version" ]] && echo "sfdx-git-delta $(cat "$STUB/sgd_version") ($(cat "$STUB/sgd_version"))" ;;
+  "plugins --json")
+    if [[ -s "$STUB/sgd_version" ]]; then
+      echo "[{\"name\": \"@salesforce/cli\", \"version\": \"x\"}, {\"name\": \"sfdx-git-delta\", \"version\": \"$(cat "$STUB/sgd_version")\"}]"
+    else
+      echo "[]"
+    fi ;;
   "plugins install")
     read -r answer
     echo "plugins install $3 answer=$answer" >>"$STUB/calls"

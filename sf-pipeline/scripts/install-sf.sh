@@ -45,17 +45,35 @@ else
 fi
 
 installed_sgd_version() {
-  # `sf plugins` lists user plugins as "sfdx-git-delta 6.45.1" (sometimes "(6.45.1)" too).
-  sf plugins 2>/dev/null | sed -n 's/^sfdx-git-delta \([0-9][0-9A-Za-z.+-]*\).*/\1/p' | head -n 1
+  # Read the JSON listing: the human-readable `sf plugins` table differs between platforms and
+  # CLI versions (a text parse found nothing on ubuntu-latest).
+  sf plugins --json 2>/dev/null | "$(find_python)" -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+items = data.get("result", data) if isinstance(data, dict) else data
+for p in items if isinstance(items, list) else []:
+    if isinstance(p, dict) and p.get("name") == "sfdx-git-delta":
+        print(p.get("version", ""))
+        break
+' 2>/dev/null | tr -d '\r'
 }
+
+# sfdx-git-delta is not signed by Salesforce. Allow-list it so the install never waits on the
+# confirmation prompt (the here-string below stays as a second guard).
+allow_dir="${XDG_CONFIG_HOME:-$HOME/.config}/sf"
+mkdir -p "$allow_dir"
+if [[ ! -f "$allow_dir/unsignedPluginAllowList.json" ]]; then
+  echo '["sfdx-git-delta"]' > "$allow_dir/unsignedPluginAllowList.json"
+fi
 
 sgd_current="$(installed_sgd_version || true)"
 if [[ "$sgd_current" == "$SGD_VERSION" ]]; then
   echo "sfdx-git-delta $SGD_VERSION is already installed."
 else
   echo "Installing sfdx-git-delta@$SGD_VERSION (found: ${sgd_current:-none})"
-  # The plugin is not signed by Salesforce, so the CLI asks for confirmation. Answer it from a
-  # here-string: no pipe, no prompt, no hang.
   sf plugins install "sfdx-git-delta@$SGD_VERSION" <<<"y"
   sgd_current="$(installed_sgd_version || true)"
   [[ "$sgd_current" == "$SGD_VERSION" ]] ||
