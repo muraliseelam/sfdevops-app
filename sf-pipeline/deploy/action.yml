@@ -1,0 +1,422 @@
+name: SF Deploy (one org)
+description: >
+  Authenticate to one org via JWT, compute the delta, publish the manifest, and validate /
+  deploy / quick-deploy. Apex changes resolve their own tests (never a whole-org run). A real
+  deploy that changes Apex is validated first, gated on coverage, and then quick-deployed from
+  the validated id, so a coverage failure never leaves the org changed and the branch unmerged.
+
+inputs:
+  environment:
+    description: Org alias / logical environment name
+    required: true
+  ref:
+    description: Git ref already checked out by the caller (recorded only)
+    required: true
+  check_only:
+    description: "true = validate only"
+    required: false
+    default: "false"
+  quick_deploy_id:
+    description: A previously validated deploy id to quick-deploy
+    required: false
+    default: ""
+  test_level:
+    description: NoTestRun | RunSpecifiedTests | RunLocalTests | RunAllTestsInOrg
+    required: false
+    default: RunSpecifiedTests
+  manifest_title:
+    description: Heading for the manifest summary
+    required: false
+    default: Deployment
+  baseline_branch:
+    description: Branch the delta is computed against
+    required: true
+  delta_from:
+    description: Exact ref/sha to diff FROM (overrides origin/<baseline_branch>; promotions pass target_sha_at_cut)
+    required: false
+    default: ""
+  source_path:
+    description: Metadata root
+    required: false
+    default: force-app
+  api_version:
+    description: Metadata API version
+    required: false
+    default: "66.0"
+  node_version:
+    description: Node for the CLI
+    required: false
+    default: "22"
+  coverage_gate:
+    description: Enforce the coverage threshold when Apex changed
+    required: false
+    default: "false"
+  coverage_threshold:
+    description: Minimum aggregate coverage percent
+    required: false
+    default: "85"
+  profiles_mode:
+    description: full | incremental
+    required: false
+    default: full
+  bypass:
+    description: "Admin bypass: skip tests + coverage enforcement (production still runs its canary)"
+    required: false
+    default: "false"
+  is_production:
+    description: "true when the target is production: Apex with no covering test is refused"
+    required: false
+    default: "false"
+  destructive_test_names:
+    description: Canary test(s) for a PROD destructive/no-Apex deploy
+    required: false
+    default: ""
+  specified_tests:
+    description: Explicit tests; overrides auto-resolution
+    required: false
+    default: ""
+  allow_destructive:
+    description: Apply destructiveChanges.xml
+    required: false
+    default: "true"
+  force_ignore:
+    description: Honour .forceignore when computing the delta
+    required: false
+    default: "true"
+  ignore_warnings:
+    description: Pass --ignore-warnings (e.g. deleting something already gone)
+    required: false
+    default: "false"
+  wait_minutes:
+    description: How long to wait for the org
+    required: false
+    default: "90"
+  sf_consumer_key:
+    description: Connected App consumer key
+    required: true
+  sf_username:
+    description: Integration username
+    required: true
+  sf_instance_url:
+    description: Login / My Domain URL
+    required: false
+    default: ""
+  sf_jwt_key:
+    description: base64-encoded server.key
+    required: true
+
+outputs:
+  deploy_id:
+    description: Salesforce deploy job id (for later quick-deploy)
+    value: ${{ steps.result.outputs.deploy_id }}
+  validated_id:
+    description: The check-only validation id, when one ran
+    value: ${{ steps.result.outputs.validated_id }}
+  has_changes:
+    description: Whether the delta contained deployable changes
+    value: ${{ steps.delta.outputs.has_changes }}
+  outcome:
+    description: success | failure | no_changes
+    value: ${{ steps.result.outputs.outcome }}
+  coverage_percent:
+    description: Aggregate Apex coverage (blank if not measured)
+    value: ${{ steps.result.outputs.coverage_percent }}
+  tests_passed:
+    description: true when Apex tests ran and none failed
+    value: ${{ steps.result.outputs.tests_passed }}
+  failing_methods:
+    description: Newline-separated Class.method message per failure
+    value: ${{ steps.result.outputs.failing_methods }}
+  coverage_note:
+    description: Why coverage is blank, when it is
+    value: ${{ steps.result.outputs.coverage_note }}
+  test_level_used:
+    description: The test level actually used
+    value: ${{ steps.tests.outputs.level }}
+  tests_used:
+    description: The test classes actually run
+    value: ${{ steps.tests.outputs.tests }}
+  component_count:
+    description: Components in the package
+    value: ${{ steps.delta.outputs.component_count }}
+  has_apex:
+    description: Apex classes or triggers in the delta
+    value: ${{ steps.delta.outputs.has_apex }}
+  has_js:
+    description: LWC or Aura JavaScript in the delta
+    value: ${{ steps.delta.outputs.has_js }}
+  has_lwc:
+    description: LWC bundles in the delta
+    value: ${{ steps.delta.outputs.has_lwc }}
+  has_destructive:
+    description: The delta deletes components
+    value: ${{ steps.delta.outputs.has_destructive }}
+  manifest_md:
+    description: Path to the rendered manifest
+    value: ${{ steps.manifest.outputs.path }}
+  changed_files_file:
+    description: Newline list of changed paths under source_path
+    value: ${{ steps.delta.outputs.changed_files_file }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Install Salesforce CLI
+      shell: bash
+      run: bash "${{ github.action_path }}/../scripts/install-sf.sh"
+
+    - name: Authenticate (JWT)
+      shell: bash
+      env:
+        SF_CONSUMER_KEY: ${{ inputs.sf_consumer_key }}
+        SF_USERNAME: ${{ inputs.sf_username }}
+        SF_INSTANCE_URL: ${{ inputs.sf_instance_url }}
+        SF_JWT_KEY: ${{ inputs.sf_jwt_key }}
+      run: bash "${{ github.action_path }}/../scripts/auth-jwt.sh" "${{ inputs.environment }}"
+
+    - name: Compute delta
+      id: delta
+      if: inputs.quick_deploy_id == ''
+      shell: bash
+      env:
+        BASELINE_BRANCH: ${{ inputs.baseline_branch }}
+        DELTA_FROM: ${{ inputs.delta_from != '' && inputs.delta_from || format('origin/{0}', inputs.baseline_branch) }}
+        DELTA_TO: HEAD
+        DELTA_OUTPUT: .sgd
+        SOURCE_PATH: ${{ inputs.source_path }}
+        FORCE_IGNORE: ${{ inputs.force_ignore }}
+        SF_API_VERSION: ${{ inputs.api_version }}
+      run: bash "${{ github.action_path }}/../scripts/delta.sh"
+
+    - name: Shape profiles and permission sets
+      if: steps.delta.outputs.has_profiles == 'true'
+      shell: bash
+      run: |
+        python3 "${{ github.action_path }}/../scripts/profiles.py" \
+          --package .sgd/package/package.xml --source-path "${{ inputs.source_path }}" \
+          --mode "${{ inputs.profiles_mode }}"
+
+    - name: Resolve tests
+      id: tests
+      if: inputs.quick_deploy_id == ''
+      shell: bash
+      env:
+        SCRIPTS: ${{ github.action_path }}/../scripts
+        HAS_CHANGES: ${{ steps.delta.outputs.has_changes }}
+        HAS_APEX: ${{ steps.delta.outputs.has_apex }}
+        HAS_APEX_DESTRUCTIVE: ${{ steps.delta.outputs.has_apex_destructive }}
+        ALLOW_DESTRUCTIVE: ${{ inputs.allow_destructive }}
+        REQUESTED_LEVEL: ${{ inputs.test_level }}
+        EXPLICIT: ${{ inputs.specified_tests }}
+        CANARY: ${{ inputs.destructive_test_names }}
+        CHECK_ONLY: ${{ inputs.check_only }}
+        IS_PROD: ${{ inputs.is_production }}
+        BYPASS: ${{ inputs.bypass }}
+        ORG: ${{ inputs.environment }}
+        SOURCE_PATH: ${{ inputs.source_path }}
+      run: |
+        set -euo pipefail
+        out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; printf '%s=%s\n' "$1" "$2"; }
+        if [[ "$HAS_CHANGES" != "true" ]]; then out level ""; out tests ""; out note "no changes"; exit 0; fi
+        apex_destructive="false"
+        if [[ "$HAS_APEX_DESTRUCTIVE" == "true" && "$ALLOW_DESTRUCTIVE" == "true" ]]; then apex_destructive="true"; fi
+        apex_involved="false"
+        if [[ "$HAS_APEX" == "true" || "$apex_destructive" == "true" ]]; then apex_involved="true"; fi
+
+        # 1. Bypass (admin only; the workflow re-verifies the labeller's permission first).
+        if [[ "$BYPASS" == "true" ]]; then
+          if [[ "$IS_PROD" == "true" && "$apex_involved" == "true" ]]; then
+            [[ -n "$CANARY" ]] || { echo "::error::Production needs a test even under bypass; set production.destructive_tests."; exit 1; }
+            out level RunSpecifiedTests; out tests "$CANARY"; out note "bypass: production canary only"; exit 0
+          fi
+          out level NoTestRun; out tests ""; out note "bypass label: tests and coverage skipped by an admin"; exit 0
+        fi
+
+        # 2. Explicit tests on the work item / promotion win.
+        if [[ -n "$EXPLICIT" ]]; then out level RunSpecifiedTests; out tests "$EXPLICIT"; out note "explicit tests"; exit 0; fi
+
+        # 3. A broader level configured on purpose is honoured as configured.
+        if [[ -n "$REQUESTED_LEVEL" && "$REQUESTED_LEVEL" != "RunSpecifiedTests" ]]; then
+          if [[ "$REQUESTED_LEVEL" == "NoTestRun" && "$IS_PROD" == "true" && "$apex_involved" == "true" ]]; then
+            echo "::error::Production forbids NoTestRun when Apex is involved."; exit 1
+          fi
+          out level "$REQUESTED_LEVEL"; out tests ""; out note "configured test level"; exit 0
+        fi
+
+        # 4. Apex added or changed: resolve the tests that cover it (never the whole org).
+        if [[ "$HAS_APEX" == "true" ]]; then
+          : > st.out
+          GITHUB_OUTPUT="$PWD/st.out" python3 "$SCRIPTS/specified_tests.py" \
+            --package .sgd/package/package.xml --source-path "$SOURCE_PATH" --org "$ORG" --cap 25
+          python3 "$SCRIPTS/ghout.py" st.out report >> "$GITHUB_STEP_SUMMARY" || true
+          tests="$(python3 "$SCRIPTS/ghout.py" st.out tests)"
+          unresolved="$(python3 "$SCRIPTS/ghout.py" st.out unresolved)"
+          if [[ -n "$tests" ]]; then
+            out level RunSpecifiedTests; out tests "$tests"; out note "resolved from the delta"; exit 0
+          fi
+          first="${unresolved%%,*}"
+          if [[ "$CHECK_ONLY" == "true" ]]; then
+            echo "::error title=No covering test::No Apex test covers ${unresolved}. Add a test class (for example ${first}Test) or name one in the work item's Specified Tests."
+            exit 1
+          fi
+          if [[ "$IS_PROD" == "true" ]]; then
+            echo "::error title=Refused::Apex with no covering test does not ship to production (${unresolved})."
+            exit 1
+          fi
+          echo "::warning title=NoTestRun::No covering test for ${unresolved}; deploying to this sandbox with NoTestRun. Coverage will be blank."
+          out level NoTestRun; out tests ""; out note "no covering test found for ${unresolved}"; exit 0
+        fi
+
+        # 5. No Apex added or changed.
+        if [[ "$IS_PROD" == "true" ]]; then
+          if [[ -n "$CANARY" ]]; then
+            out level RunSpecifiedTests; out tests "$CANARY"; out note "production canary (deletion or no Apex)"; exit 0
+          fi
+          if [[ "$apex_destructive" == "true" ]]; then
+            out level RunLocalTests; out tests ""; out note "production Apex deletion and no canary configured"; exit 0
+          fi
+        fi
+        out level NoTestRun; out tests ""; out note "no Apex in the delta"
+
+    - name: Render manifest
+      id: manifest
+      if: inputs.quick_deploy_id == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        args=(--package .sgd/package/package.xml --title "${{ inputs.manifest_title }}" --out manifest.md)
+        if [[ "${{ inputs.allow_destructive }}" == "true" && -f .sgd/destructiveChanges/destructiveChanges.xml ]]; then
+          args+=(--destructive .sgd/destructiveChanges/destructiveChanges.xml)
+        fi
+        python3 "${{ github.action_path }}/../scripts/manifest_to_md.py" "${args[@]}"
+        cat manifest.md >> "$GITHUB_STEP_SUMMARY"
+        echo "path=manifest.md" >> "$GITHUB_OUTPUT"
+
+    - name: Deploy
+      id: run
+      if: inputs.quick_deploy_id != '' || steps.delta.outputs.has_changes == 'true'
+      shell: bash
+      env:
+        SCRIPTS: ${{ github.action_path }}/../scripts
+        ALIAS: ${{ inputs.environment }}
+        PACKAGE_XML: .sgd/package/package.xml
+        DESTRUCTIVE_XML: ${{ inputs.allow_destructive == 'true' && steps.delta.outputs.has_destructive == 'true' && '.sgd/destructiveChanges/destructiveChanges.xml' || '' }}
+        LEVEL: ${{ steps.tests.outputs.level }}
+        TESTS: ${{ steps.tests.outputs.tests }}
+        QUICK: ${{ inputs.quick_deploy_id }}
+        CHECK_ONLY: ${{ inputs.check_only }}
+        GATE: ${{ inputs.coverage_gate == 'true' && inputs.bypass != 'true' && steps.delta.outputs.has_apex == 'true' }}
+        HAS_APEX: ${{ steps.delta.outputs.has_apex == 'true' }}
+        THRESHOLD: ${{ inputs.coverage_threshold }}
+        WAIT_MINUTES: ${{ inputs.wait_minutes }}
+        IGNORE_WARNINGS: ${{ inputs.ignore_warnings }}
+      run: |
+        set -euo pipefail
+        out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+        classes="$(python3 - <<'PY'
+        import xml.etree.ElementTree as ET
+        ns = {"m": "http://soap.sforce.com/2006/04/metadata"}
+        try:
+            root = ET.parse(".sgd/package/package.xml").getroot()
+        except Exception:
+            print("")
+            raise SystemExit
+        names = []
+        for t in root.findall("m:types", ns):
+            if t.findtext("m:name", default="", namespaces=ns) in ("ApexClass", "ApexTrigger"):
+                names += [m.text for m in t.findall("m:members", ns) if m.text and m.text != "*"]
+        print(",".join(names))
+        PY
+        )"
+        report() {  # report <deploy json> <coverage gate true|false>
+          : > report.out
+          GITHUB_OUTPUT="$PWD/report.out" python3 "$SCRIPTS/deploy_report.py" --report-json "$1" \
+            --threshold "$THRESHOLD" --coverage-gate "$2" --apex-changed "$HAS_APEX" \
+            --classes "$classes" --summary-file deploy-summary.md
+          cat deploy-summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        }
+        field() { python3 "$SCRIPTS/ghout.py" report.out "$1"; }
+        run_deploy() {  # run_deploy <out json>; MODE / TEST_LEVEL / QUICK_ID come from the environment
+          : > deploy.out
+          GITHUB_OUTPUT="$PWD/deploy.out" OUT_JSON="$1" bash "$SCRIPTS/deploy.sh"
+        }
+
+        if [[ -n "$QUICK" ]]; then
+          MODE=quick QUICK_ID="$QUICK" run_deploy deploy-result.json
+          report deploy-result.json false
+          out validated_id "$QUICK"
+          exit 0
+        fi
+
+        if [[ "$CHECK_ONLY" == "true" ]]; then
+          MODE=validate TEST_LEVEL="${LEVEL:-NoTestRun}" run_deploy deploy-result.json
+          report deploy-result.json "$GATE"
+          out validated_id "$(python3 "$SCRIPTS/ghout.py" deploy.out deploy_id)"
+          exit 0
+        fi
+
+        if [[ "$GATE" == "true" && "$LEVEL" == "RunSpecifiedTests" ]]; then
+          # Validate first, gate on coverage, then quick-deploy exactly what was validated.
+          MODE=validate TEST_LEVEL="$LEVEL" run_deploy validate-result.json
+          report validate-result.json true
+          vid="$(field deploy_id)"
+          out validated_id "$vid"
+          if [[ "$(field outcome)" != "success" ]]; then
+            echo "::error::Validation or the coverage gate failed; nothing was deployed."
+            exit 0
+          fi
+          MODE=quick QUICK_ID="$vid" run_deploy deploy-result.json
+          report deploy-result.json false
+          exit 0
+        fi
+
+        MODE=deploy TEST_LEVEL="${LEVEL:-NoTestRun}" run_deploy deploy-result.json
+        report deploy-result.json false
+
+    - name: Result
+      id: result
+      if: always()
+      shell: bash
+      env:
+        SCRIPTS: ${{ github.action_path }}/../scripts
+        HAS_CHANGES: ${{ steps.delta.outputs.has_changes }}
+        QUICK: ${{ inputs.quick_deploy_id }}
+        RUN_OUTCOME: ${{ steps.run.outcome }}
+        TESTS_OUTCOME: ${{ steps.tests.outcome }}
+        NOTE: ${{ steps.tests.outputs.note }}
+        VALIDATED: ${{ steps.run.outputs.validated_id }}
+      run: |
+        set -euo pipefail
+        out() { printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; }
+        if [[ -z "$QUICK" && "$HAS_CHANGES" != "true" && "$TESTS_OUTCOME" != "failure" ]]; then
+          out outcome no_changes; out deploy_id ""; out validated_id ""
+          out coverage_note "no deployable changes"
+          echo "### No deployable changes" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        if [[ ! -s report.out ]]; then
+          out outcome failure; out deploy_id ""; out validated_id "${VALIDATED:-}"
+          reason="the deploy did not produce a report (tests step: ${TESTS_OUTCOME}, deploy step: ${RUN_OUTCOME})"
+          out coverage_note "$reason"
+          echo "::error::Deployment to ${{ inputs.environment }} did not run: ${reason}."
+          exit 1
+        fi
+        field() { python3 "$SCRIPTS/ghout.py" report.out "$1"; }
+        outcome="$(field outcome)"
+        out outcome "${outcome:-failure}"
+        out deploy_id "$(field deploy_id)"
+        out validated_id "${VALIDATED:-}"
+        out coverage_percent "$(field coverage_percent)"
+        out tests_passed "$(field tests_passed)"
+        note="$(field coverage_note)"
+        out coverage_note "${note:-${NOTE:-}}"
+        delim="EOF_FM_${GITHUB_RUN_ID:-0}_${RANDOM}"
+        { echo "failing_methods<<${delim}"; field failing_methods; echo; echo "${delim}"; } >> "$GITHUB_OUTPUT"
+        if [[ "$outcome" != "success" ]]; then
+          echo "::error::Deployment to ${{ inputs.environment }} did not succeed (deploy id $(field deploy_id))."
+          exit 1
+        fi

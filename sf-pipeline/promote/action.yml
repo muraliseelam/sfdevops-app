@@ -1,0 +1,147 @@
+name: SF Promote (promotion branch)
+description: >
+  Copado-style promotion. mode=cut cuts promotion/<WI>-to-<env> from the TARGET env branch and
+  merges the feature branch(es) into it (conflict gate). mode=merge runs AFTER a successful
+  deploy and merges the promotion into the target, refusing if the target moved since the cut.
+
+inputs:
+  mode:
+    description: "cut | merge"
+    required: true
+  target_branch:
+    description: Target environment branch
+    required: true
+  target_env:
+    description: Target environment pipeline key (used in the promotion branch name)
+    required: true
+  work_item:
+    description: Work item key(s) for the branch name, e.g. WI-0032
+    required: true
+  feature_refs:
+    description: "cut: comma-separated feature branches to merge in"
+    required: false
+    default: ""
+  promotion_prefix:
+    description: Promotion branch prefix (from pipeline.config.yml branch_prefixes.promotion)
+    required: false
+    default: "promotion/"
+  target_sha_at_cut:
+    description: "merge: the target sha recorded by mode=cut"
+    required: false
+    default: ""
+  deployed_sha:
+    description: "merge: the commit that was deployed (must equal HEAD)"
+    required: false
+    default: ""
+  merge_mode:
+    description: "merge: auto (push, then PR fallback) | push | pr"
+    required: false
+    default: auto
+  token:
+    description: Token for the PR fallback, commit status and conflict comments
+    required: false
+    default: ${{ github.token }}
+  pr_number:
+    description: "cut: PR to comment the conflicting paths on, when there is one"
+    required: false
+    default: ""
+
+outputs:
+  promotion_branch:
+    description: The promotion branch name
+    value: ${{ steps.run.outputs.promotion_branch }}
+  target_sha_at_cut:
+    description: The target head at the moment of the cut (pins the post-deploy merge)
+    value: ${{ steps.run.outputs.target_sha_at_cut }}
+  head_sha:
+    description: HEAD after the cut (the deployable tree)
+    value: ${{ steps.run.outputs.head_sha }}
+  merged_refs:
+    description: Feature refs actually merged in
+    value: ${{ steps.run.outputs.merged_refs }}
+  no_op:
+    description: true when every feature was already in the target
+    value: ${{ steps.run.outputs.no_op }}
+  conflict:
+    description: true when the promotion merge conflicted
+    value: ${{ steps.run.outputs.conflict }}
+  conflict_paths:
+    description: Newline-separated conflicting paths
+    value: ${{ steps.run.outputs.conflict_paths }}
+  merged:
+    description: "merge: true when the promotion landed on the target"
+    value: ${{ steps.run.outputs.merged }}
+  merge_sha:
+    description: "merge: the commit now at the target head"
+    value: ${{ steps.run.outputs.merge_sha }}
+  merge_method:
+    description: "merge: push | pr | none"
+    value: ${{ steps.run.outputs.merge_method }}
+  reason:
+    description: "merge: why it did not merge"
+    value: ${{ steps.run.outputs.reason }}
+  pr_url:
+    description: "merge: the promotion PR used by the fallback path"
+    value: ${{ steps.run.outputs.pr_url }}
+  exit_code:
+    description: promote.sh exit code (0 ok, 10 conflict, 11 target moved, 12 merge failed)
+    value: ${{ steps.run.outputs.exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+        TARGET_ENV: ${{ inputs.target_env }}
+        WORK_ITEM: ${{ inputs.work_item }}
+        FEATURE_REFS: ${{ inputs.feature_refs }}
+        PROMOTION_PREFIX: ${{ inputs.promotion_prefix }}
+        TARGET_SHA_AT_CUT: ${{ inputs.target_sha_at_cut }}
+        DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        MERGE_MODE: ${{ inputs.merge_mode }}
+        GH_TOKEN: ${{ inputs.token }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set +e
+        bash "${{ github.action_path }}/../scripts/promote.sh" "${{ inputs.mode }}"
+        code=$?
+        set -e
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Comment the conflicting paths
+      if: steps.run.outputs.conflict == 'true' && inputs.pr_number != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PATHS: ${{ steps.run.outputs.conflict_paths }}
+        PR: ${{ inputs.pr_number }}
+        TARGET: ${{ inputs.target_branch }}
+        WI: ${{ inputs.work_item }}
+      run: |
+        {
+          echo "### :x: Merge conflict promoting ${WI} to \`${TARGET}\`"
+          echo
+          echo "The promotion branch is cut from \`${TARGET}\` and the feature is merged into it,"
+          echo "so the deploy carries both the target's changes and yours. That merge conflicted in:"
+          echo
+          while IFS= read -r p; do [ -n "$p" ] && echo "- \`$p\`"; done <<< "$PATHS"
+          echo
+          echo "Resolve it on the feature branch (merge \`origin/${TARGET}\` into it, fix, push), then approve again."
+          echo "Nothing was deployed and nothing was merged."
+        } > conflict-comment.md
+        gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file conflict-comment.md || echo "::warning::could not comment on PR #$PR"
+
+    - name: Fail on conflict or refused merge
+      if: steps.run.outputs.exit_code != '0'
+      shell: bash
+      run: |
+        case "${{ steps.run.outputs.exit_code }}" in
+          10) echo "::error::Promotion merge conflicted. Nothing was deployed or merged." ;;
+          11) echo "::error::Post-deploy merge refused: the target moved during the run." ;;
+          12) echo "::error::Post-deploy merge failed: the branch was NOT merged." ;;
+          *)  echo "::error::promote.sh failed (exit ${{ steps.run.outputs.exit_code }})." ;;
+        esac
+        exit 1
