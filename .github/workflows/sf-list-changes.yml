@@ -1,0 +1,92 @@
+# sf-list-changes — list the components changed in a developer org (SourceMember), newest
+# first with Last Modified / Last Modified By, and send them to the hub's commit UI.
+name: sf-list-changes
+run-name: "List changes in ${{ inputs.source_org }} for ${{ inputs.work_item }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_item:
+        description: Work item key
+        type: string
+        required: false
+        default: ""
+      work_item_id:
+        description: Hub record id
+        type: string
+        required: false
+        default: ""
+      source_org:
+        description: A source_orgs key from pipeline.config.yml
+        type: string
+        required: true
+      request_id:
+        description: Correlation id from the hub
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      gh_environment: ${{ steps.src.outputs.r_gh_environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: src
+        run: python3 sf-pipeline/scripts/plan.py source "${{ inputs.source_org }}"
+
+  list:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.gh_environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - run: bash sf-pipeline/scripts/install-sf.sh
+      - name: Authenticate to the source org
+        env:
+          SF_CONSUMER_KEY: ${{ secrets.SF_CONSUMER_KEY }}
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+        run: bash sf-pipeline/scripts/auth-jwt.sh src
+      - name: Query SourceMember
+        id: list
+        run: |
+          set -euo pipefail
+          bash sf-pipeline/scripts/list-source-members.sh src members.json
+          python3 -c "import json; m=json.load(open('members.json')); print(f'{len(m)} changed component(s)'); [print(f\"  {x['lastModifiedDate']}  {x['type']}:{x['name']}  ({x.get('lastModifiedBy','')})\") for x in m[:50]]"
+      - name: Send to the hub
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WI: ${{ inputs.work_item }}
+          WI_ID: ${{ inputs.work_item_id }}
+          REQ: ${{ inputs.request_id }}
+          SRC: ${{ inputs.source_org }}
+          OK: ${{ steps.list.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HUB_JWT_KEY" ]]; then echo "::notice::No hub configured; members listed above."; exit 0; fi
+          python3 - <<'PY'
+          import json, os
+          members = json.load(open("members.json")) if os.path.isfile("members.json") else []
+          ok = os.environ["OK"] == "true"
+          payload = {"workItem": os.environ["WI"], "workItemId": os.environ["WI_ID"], "requestId": os.environ["REQ"],
+                     "sourceOrg": os.environ["SRC"], "status": "Received" if ok else "Failed",
+                     "message": "" if ok else "Listing changes failed; see the run log", "members": members}
+          json.dump(payload, open("source-members.json", "w"))
+          PY
+          bash sf-pipeline/scripts/install-sf.sh >/dev/null
+          bash sf-pipeline/scripts/auth-hub.sh >/dev/null
+          bash sf-pipeline/scripts/hub-callback.sh source-members source-members.json

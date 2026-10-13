@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Apex quality gate. sf-pipeline/quality runs PMD with this ruleset against the Apex classes
+  and triggers in the delta only. Violations at priority 1 or 2 fail the gate; 3 and below
+  are reported but do not block. Adjust priorities here, not in the workflows.
+-->
+<ruleset name="sfdevops-apex"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+  <description>Security, performance and correctness rules that block a merge; design rules that advise.</description>
+
+  <!-- Security: block -->
+  <rule ref="category/apex/security.xml/ApexSOQLInjection"><priority>1</priority></rule>
+  <rule ref="category/apex/security.xml/ApexInsecureEndpoint"><priority>2</priority></rule>
+  <rule ref="category/apex/security.xml/ApexBadCrypto"><priority>2</priority></rule>
+  <rule ref="category/apex/security.xml/ApexDangerousMethods"><priority>2</priority></rule>
+  <rule ref="category/apex/security.xml/ApexSharingViolations"><priority>2</priority></rule>
+  <rule ref="category/apex/security.xml/ApexSuggestUsingNamedCred"><priority>2</priority></rule>
+  <rule ref="category/apex/security.xml/ApexXSSFromURLParam"><priority>2</priority></rule>
+  <rule ref="category/apex/security.xml/ApexOpenRedirect"><priority>2</priority></rule>
+
+  <!-- Governor limits and correctness: block -->
+  <rule ref="category/apex/performance.xml/OperationWithLimitsInLoop"><priority>2</priority></rule>
+  <rule ref="category/apex/errorprone.xml/AvoidHardcodingId"><priority>2</priority></rule>
+  <rule ref="category/apex/errorprone.xml/EmptyCatchBlock"><priority>2</priority></rule>
+  <rule ref="category/apex/errorprone.xml/MethodWithSameNameAsEnclosingClass"><priority>2</priority></rule>
+  <rule ref="category/apex/bestpractices.xml/ApexUnitTestShouldNotUseSeeAllDataTrue"><priority>2</priority></rule>
+  <rule ref="category/apex/bestpractices.xml/ApexUnitTestClassShouldHaveAsserts"><priority>2</priority></rule>
+
+  <!-- Advisory -->
+  <rule ref="category/apex/bestpractices.xml/AvoidGlobalModifier"><priority>3</priority></rule>
+  <rule ref="category/apex/bestpractices.xml/DebugsShouldUseLoggingLevel"><priority>4</priority></rule>
+  <rule ref="category/apex/design.xml/CognitiveComplexity"><priority>3</priority></rule>
+  <rule ref="category/apex/design.xml/ExcessiveParameterList"><priority>3</priority></rule>
+  <rule ref="category/apex/codestyle.xml/ClassNamingConventions"><priority>4</priority></rule>
+  <rule ref="category/apex/errorprone.xml/AvoidDirectAccessTriggerMap"><priority>3</priority></rule>
+  <rule ref="category/apex/performance.xml/AvoidDebugStatements"><priority>4</priority></rule>
+</ruleset>

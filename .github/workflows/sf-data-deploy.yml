@@ -1,0 +1,154 @@
+# sf-data-deploy — records, not metadata. Export a data set's templates from one org and
+# upsert them into another by external id, parents before children (data_plan.py).
+name: sf-data-deploy
+run-name: "Data deploy ${{ inputs.source_env }} → ${{ inputs.target_env }} · ${{ inputs.data_set_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_set_id:
+        description: Hub CDO_Data_Set__c id
+        type: string
+        required: false
+        default: ""
+      source_env:
+        description: Source pipeline key (an environment, production or a source org)
+        type: string
+        required: true
+      target_env:
+        description: Target pipeline key (production uses its reviewer-gated GitHub Environment)
+        type: string
+        required: true
+      plan:
+        description: Base64 JSON data plan (built by the hub's DataController)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      source_gh_env: ${{ steps.resolve.outputs.source_gh_env }}
+      target_gh_env: ${{ steps.resolve.outputs.target_gh_env }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - name: Resolve both orgs
+        id: resolve
+        env:
+          SOURCE: ${{ inputs.source_env }}
+          TARGET: ${{ inputs.target_env }}
+        run: |
+          set -euo pipefail
+          gh_env() {
+            : > r.out
+            if GITHUB_OUTPUT=r.out python3 sf-pipeline/scripts/plan.py target "$1" >/dev/null 2>&1 \
+               || GITHUB_OUTPUT=r.out python3 sf-pipeline/scripts/plan.py source "$1" >/dev/null 2>&1; then
+              python3 sf-pipeline/scripts/ghout.py r.out r_gh_environment
+            else
+              echo "::error::unknown environment or source org '$1'" >&2; exit 3
+            fi
+          }
+          [[ "$SOURCE" != "$TARGET" ]] || { echo "::error::source and target are the same org"; exit 1; }
+          echo "source_gh_env=$(gh_env "$SOURCE")" >> "$GITHUB_OUTPUT"
+          echo "target_gh_env=$(gh_env "$TARGET")" >> "$GITHUB_OUTPUT"
+      - name: Validate the plan
+        run: python3 sf-pipeline/scripts/data_plan.py steps --plan-b64 "${{ inputs.plan }}" --out steps.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: data-steps
+          path: steps.json
+
+  export:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.source_gh_env }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - uses: actions/download-artifact@v8
+        with:
+          name: data-steps
+      - run: bash sf-pipeline/scripts/install-sf.sh
+      - name: Authenticate to the source
+        env:
+          SF_CONSUMER_KEY: ${{ secrets.SF_CONSUMER_KEY }}
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+        run: bash sf-pipeline/scripts/auth-jwt.sh src
+      - name: Export
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          python3 -c "import json; [print(s['file'] + '\t' + s['soql']) for s in json.load(open('steps.json'))]" |
+          while IFS=$'\t' read -r file soql; do
+            echo "::group::$file"
+            sf data export bulk --query "$soql" --output-file "$file" --result-format csv --wait 15 --target-org src
+            echo "$(($(wc -l < "$file") - 1)) record(s)"
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: data-export
+          path: data/
+          retention-days: 3
+
+  import:
+    needs: [plan, export]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.target_gh_env }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - uses: actions/download-artifact@v8
+        with:
+          name: data-steps
+      - uses: actions/download-artifact@v8
+        with:
+          name: data-export
+          path: data
+      - run: bash sf-pipeline/scripts/install-sf.sh
+      - name: Authenticate to the target
+        env:
+          SF_CONSUMER_KEY: ${{ secrets.SF_CONSUMER_KEY }}
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+        run: bash sf-pipeline/scripts/auth-jwt.sh tgt
+      - name: Upsert, parents first
+        id: upsert
+        run: |
+          set -euo pipefail
+          total=0
+          python3 -c "import json; [print('\t'.join([s['file'], s['object'], s['externalId']])) for s in json.load(open('steps.json'))]" > order.tsv
+          while IFS=$'\t' read -r file obj ext; do
+            rows=$(($(wc -l < "$file") - 1))
+            if [[ "$rows" -le 0 ]]; then echo "$obj: nothing to load"; continue; fi
+            echo "::group::$obj ($rows) by $ext"
+            sf data upsert bulk --sobject "$obj" --file "$file" --external-id "$ext" --wait 15 --target-org tgt
+            echo "::endgroup::"
+            total=$((total + rows))
+          done < order.tsv
+          echo "records=$total" >> "$GITHUB_OUTPUT"
+          echo "### Upserted $total record(s) into ${{ inputs.target_env }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Hub callback
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          EVENT_TYPE: Data
+          STATUS: ${{ steps.upsert.outcome == 'success' && 'Success' || 'Failed' }}
+          ENVIRONMENT: ${{ inputs.target_env }}
+          COMPONENT_COUNT: ${{ steps.upsert.outputs.records }}
+          MESSAGE: "Data set ${{ inputs.data_set_id }}: ${{ steps.upsert.outputs.records || 0 }} record(s) from ${{ inputs.source_env }} to ${{ inputs.target_env }}"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

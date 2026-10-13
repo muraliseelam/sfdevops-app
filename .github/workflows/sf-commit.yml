@@ -1,0 +1,180 @@
+# sf-commit — retrieve ONLY the selected components from a developer org and commit them to
+# the work item's feature branch (cut from the baseline the first time, so a feature always
+# reflects production). Writes CDO_Commit__c + CDO_Component__c in the hub via the callback.
+name: sf-commit
+run-name: "Commit ${{ inputs.work_item }} from ${{ inputs.source_org }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_item:
+        description: Work item key (WI-0001)
+        type: string
+        required: true
+      work_item_id:
+        description: Hub record id
+        type: string
+        required: false
+        default: ""
+      source_org:
+        description: A source_orgs key from pipeline.config.yml
+        type: string
+        required: true
+      components:
+        description: 'JSON array: [{"type":"ApexClass","name":"Foo"},{"type":"ApexClass","name":"Old","action":"Delete"}]'
+        type: string
+        required: true
+      commit_message:
+        description: Commit message
+        type: string
+        required: true
+      feature_branch:
+        description: Feature branch (blank = feature prefix + work item)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      gh_environment: ${{ steps.src.outputs.r_gh_environment }}
+      feature: ${{ steps.branch.outputs.feature }}
+      baseline_branch: ${{ steps.cfg.outputs.baseline_branch }}
+      source_path: ${{ steps.cfg.outputs.source_path }}
+      api_version: ${{ steps.cfg.outputs.api_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - id: src
+        run: python3 sf-pipeline/scripts/plan.py source "${{ inputs.source_org }}"
+      - id: branch
+        env:
+          INPUT: ${{ inputs.feature_branch }}
+          PREFIX: ${{ steps.cfg.outputs.feature_prefix }}
+          WI: ${{ inputs.work_item }}
+        run: echo "feature=${INPUT:-${PREFIX}${WI}}" >> "$GITHUB_OUTPUT"
+
+  commit:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.gh_environment }}
+    concurrency:
+      group: sf-commit-${{ needs.plan.outputs.feature }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Install Salesforce CLI
+        run: bash sf-pipeline/scripts/install-sf.sh
+
+      - name: Authenticate to the source org
+        env:
+          SF_CONSUMER_KEY: ${{ secrets.SF_CONSUMER_KEY }}
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+        run: bash sf-pipeline/scripts/auth-jwt.sh src
+
+      - name: Feature branch (cut from the baseline the first time)
+        env:
+          FEATURE: ${{ needs.plan.outputs.feature }}
+          BASELINE: ${{ needs.plan.outputs.baseline_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin "$FEATURE" >/dev/null; then
+            git fetch --no-tags --quiet origin "+refs/heads/${FEATURE}:refs/remotes/origin/${FEATURE}"
+            git checkout --quiet -B "$FEATURE" "origin/${FEATURE}"
+          else
+            git checkout --quiet -B "$FEATURE" "origin/${BASELINE}"
+            echo "::notice::Created ${FEATURE} from ${BASELINE}"
+          fi
+
+      - name: Build the retrieve manifest
+        id: pkg
+        env:
+          COMPONENTS: ${{ inputs.components }}
+        run: |
+          python3 sf-pipeline/scripts/commit_helper.py package --components "$COMPONENTS" \
+            --denylist sf-pipeline/config/commit-denylist.txt \
+            --api "${{ needs.plan.outputs.api_version }}" --out .commit/package.xml
+          cat .commit/package.xml
+
+      - name: Retrieve the selected components
+        if: steps.pkg.outputs.retrieve_count != '0'
+        run: |
+          set -euo pipefail
+          sf project retrieve start --manifest .commit/package.xml --target-org src --ignore-conflicts --wait 30 --json > .commit/retrieve.json || true
+          python3 - <<'PY'
+          import json, sys
+          r = json.load(open(".commit/retrieve.json"))
+          res = r.get("result") or {}
+          files = res.get("files") or []
+          bad = [f for f in files if f.get("state") == "Failed" or f.get("error")]
+          print(f"retrieved {len(files)} file(s); status={r.get('status')}")
+          for f in bad:
+              print(f"::error::{f.get('type')}:{f.get('fullName')} {f.get('error')}")
+          if r.get("status", 1) != 0 or bad:
+              print("::error::Retrieve failed: " + (r.get("message") or "see errors above"))
+              sys.exit(1)
+          PY
+
+      - name: Apply deletions
+        if: steps.pkg.outputs.delete_count != '0'
+        run: python3 sf-pipeline/scripts/commit_helper.py apply-deletes --deletes .commit/deletes.json --source-path "${{ needs.plan.outputs.source_path }}"
+
+      - name: Commit and push
+        id: commit
+        env:
+          FEATURE: ${{ needs.plan.outputs.feature }}
+          WI: ${{ inputs.work_item }}
+          MSG: ${{ inputs.commit_message }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          git add -A "${{ needs.plan.outputs.source_path }}"
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The org copy of the selected components matches ${FEATURE}; nothing to commit."
+            echo "[]" > components.json
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit --quiet -m "[${WI}] ${MSG}" -m "Retrieved from source org '${{ inputs.source_org }}' by sf-commit (requested via @${ACTOR})."
+          git push --quiet origin "HEAD:refs/heads/${FEATURE}"
+          python3 sf-pipeline/scripts/commit_helper.py payload --from HEAD~1 --to HEAD \
+            --source-path "${{ needs.plan.outputs.source_path }}" --out components.json
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Committed ${WI} to \`${FEATURE}\`"
+            echo
+            python3 -c "import json; [print(f\"- {c['action']}: {c['uniqueId']}\") for c in json.load(open('components.json'))]"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hub callback (commit)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ inputs.work_item }}
+          EVENT_TYPE: Commit
+          STATUS: ${{ job.status == 'success' && 'Success' || 'Failed' }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+          MESSAGE: "${{ steps.commit.outputs.changed == 'false' && 'No changes - the org matches the feature branch' || inputs.commit_message }}"
+          COMPONENTS_JSON_FILE: components.json
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

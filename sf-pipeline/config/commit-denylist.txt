@@ -1,0 +1,12 @@
+# Components sf-commit never writes to git, whatever the developer selects.
+# One "Type:Member" glob per line. Credentials and org-wide settings do not belong in a
+# feature branch: they carry secrets, or they would overwrite another team's configuration.
+
+ConnectedApp:*
+NamedCredential:*
+ExternalCredential:*
+AuthProvider:*
+Certificate:*
+Settings:*
+InstalledPackage:*
+SamlSsoConfig:*

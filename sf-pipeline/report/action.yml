@@ -1,0 +1,141 @@
+name: SF Report
+description: >
+  Render the component manifest and the deploy outcome into the job summary and into one
+  sticky PR comment per environment and kind (updated in place, never duplicated). The comment
+  carries a hidden machine-readable marker that sf-pr-approved reads to check the latest
+  validation for the PR's head commit.
+
+inputs:
+  kind:
+    description: validation | deploy | promotion | release
+    required: true
+  environment:
+    description: Environment pipeline key
+    required: true
+  title:
+    description: Heading
+    required: true
+  outcome:
+    description: success | failure | no_changes
+    required: true
+  manifest_md:
+    description: Path to the rendered manifest (optional)
+    required: false
+    default: manifest.md
+  deploy_id:
+    required: false
+    default: ""
+    description: Salesforce deploy id
+  coverage_percent:
+    required: false
+    default: ""
+    description: Aggregate coverage
+  coverage_note:
+    required: false
+    default: ""
+    description: Why coverage is blank
+  tests_passed:
+    required: false
+    default: ""
+    description: true/false
+  test_level:
+    required: false
+    default: ""
+    description: Test level used
+  tests:
+    required: false
+    default: ""
+    description: Tests run
+  failing_methods:
+    required: false
+    default: ""
+    description: Newline-separated failures
+  head_sha:
+    required: false
+    default: ""
+    description: The PR head commit this report is about (for the marker)
+  extra_md:
+    required: false
+    default: ""
+    description: Extra markdown appended to the comment
+  pr_number:
+    required: false
+    default: ""
+    description: PR to comment on (blank = summary only)
+  token:
+    required: false
+    default: ${{ github.token }}
+    description: Token for the PR comment
+
+runs:
+  using: composite
+  steps:
+    - name: Render report
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        TITLE: ${{ inputs.title }}
+        OUTCOME: ${{ inputs.outcome }}
+        MANIFEST: ${{ inputs.manifest_md }}
+        DEPLOY_ID: ${{ inputs.deploy_id }}
+        COVERAGE: ${{ inputs.coverage_percent }}
+        COVERAGE_NOTE: ${{ inputs.coverage_note }}
+        TESTS_PASSED: ${{ inputs.tests_passed }}
+        TEST_LEVEL: ${{ inputs.test_level }}
+        TESTS: ${{ inputs.tests }}
+        FAILING: ${{ inputs.failing_methods }}
+        HEAD_SHA: ${{ inputs.head_sha }}
+        EXTRA: ${{ inputs.extra_md }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        python3 - <<'PY'
+        import os
+        e = os.environ.get
+        icon = {"success": ":white_check_mark:", "failure": ":x:", "no_changes": ":white_circle:"}.get(e("OUTCOME"), ":grey_question:")
+        lines = [f"<!-- sfdevops:report:{e('KIND')}:{e('ENVIRONMENT')} -->",
+                 f"<!-- sfdevops:{e('KIND')} sha={e('HEAD_SHA','')} outcome={e('OUTCOME')} coverage={e('COVERAGE','')} tests_passed={e('TESTS_PASSED','')} -->",
+                 f"## {icon} {e('TITLE')}", "",
+                 "| | |", "|---|---|",
+                 f"| Environment | `{e('ENVIRONMENT')}` |",
+                 f"| Outcome | **{e('OUTCOME')}** |"]
+        if e("DEPLOY_ID"): lines.append(f"| Deploy id | `{e('DEPLOY_ID')}` |")
+        if e("TEST_LEVEL"): lines.append(f"| Test level | `{e('TEST_LEVEL')}` |")
+        if e("TESTS"): lines.append(f"| Tests | {', '.join('`'+t.strip()+'`' for t in e('TESTS').split(',') if t.strip())} |")
+        cov = e("COVERAGE")
+        lines.append(f"| Coverage | {cov + ' %' if cov else '— ' + (e('COVERAGE_NOTE') or 'not measured')} |")
+        if e("TESTS_PASSED"): lines.append(f"| Tests passed | {e('TESTS_PASSED')} |")
+        if e("HEAD_SHA"): lines.append(f"| Commit | `{e('HEAD_SHA')[:12]}` |")
+        lines.append(f"| Run | [{e('RUN_URL').rsplit('/',1)[-1]}]({e('RUN_URL')}) |")
+        fail = (e("FAILING") or "").strip()
+        if fail:
+            lines += ["", "### Failing tests", "", "```", fail[:6000], "```"]
+        m = e("MANIFEST")
+        if m and os.path.isfile(m):
+            lines += ["", "<details><summary>Component manifest</summary>", "", open(m, encoding="utf-8").read(), "", "</details>"]
+        if e("EXTRA"):
+            lines += ["", e("EXTRA")]
+        body = "\n".join(lines) + "\n"
+        open("report-comment.md", "w", encoding="utf-8").write(body)
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as s:
+            s.write(body)
+        PY
+
+    - name: Sticky PR comment
+      if: inputs.pr_number != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR: ${{ inputs.pr_number }}
+        MARKER: "<!-- sfdevops:report:${{ inputs.kind }}:${{ inputs.environment }} -->"
+      run: |
+        set -euo pipefail
+        id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+               --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | tail -1 || true)"
+        if [[ -n "$id" ]]; then
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@report-comment.md --silent \
+            || echo "::warning::could not update the report comment"
+        else
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file report-comment.md \
+            || echo "::warning::could not comment on PR #$PR"
+        fi

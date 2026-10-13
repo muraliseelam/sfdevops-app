@@ -1,0 +1,94 @@
+# sf-open-pr — open (or reuse) the feature → entry-environment pull request and link it on the
+# work item. The PR is opened with GH_PAT when set, because a PR opened with GITHUB_TOKEN does
+# not trigger sf-pr-validation.
+name: sf-open-pr
+run-name: "Open PR for ${{ inputs.work_item }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_item:
+        description: Work item key
+        type: string
+        required: true
+      work_item_id:
+        description: Hub record id
+        type: string
+        required: false
+        default: ""
+      feature_branch:
+        description: Feature branch (blank = feature prefix + work item)
+        type: string
+        required: false
+        default: ""
+      title:
+        description: PR title (the work item key is prefixed)
+        type: string
+        required: false
+        default: ""
+      body:
+        description: PR body
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  open:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - name: Open or reuse the PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          USES_PAT: ${{ secrets.GH_PAT != '' }}
+          WI: ${{ inputs.work_item }}
+          FEATURE_INPUT: ${{ inputs.feature_branch }}
+          PREFIX: ${{ steps.cfg.outputs.feature_prefix }}
+          ENTRY: ${{ steps.cfg.outputs.entry_branch }}
+          TITLE: ${{ inputs.title }}
+          BODY: ${{ inputs.body }}
+        run: |
+          set -euo pipefail
+          feature="${FEATURE_INPUT:-${PREFIX}${WI}}"
+          git ls-remote --exit-code --heads origin "$feature" >/dev/null || { echo "::error::Branch ${feature} does not exist yet; commit first."; exit 1; }
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$feature" --base "$ENTRY" --state open --json url,number --jq '.[0] // empty')"
+          if [[ -n "$existing" ]]; then
+            url="$(jq -r .url <<<"$existing")"; num="$(jq -r .number <<<"$existing")"
+            echo "::notice::Reusing ${url}"
+          else
+            title="[${WI}] ${TITLE:-$WI}"
+            body="${BODY:-Work item ${WI}.}"$'\n\n'"_Opened by sf-open-pr. This PR is a review gate: approval starts the promotion; the pipeline merges after the deploy succeeds. Add a line \`Specified-Tests: A, B\` to name tests explicitly._"
+            url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$ENTRY" --head "$feature" --title "$title" --body "$body")"
+            num="${url##*/}"
+          fi
+          if [[ "$USES_PAT" != "true" ]]; then
+            echo "::warning::GH_PAT is not set: a PR opened with GITHUB_TOKEN does not trigger sf-pr-validation. Dispatching it explicitly."
+            gh workflow run sf-pr-validation.yml --repo "$GITHUB_REPOSITORY" -f pr_number="$num" -f work_item="$WI" || true
+          fi
+          { echo "url=$url"; echo "number=$num"; } >> "$GITHUB_OUTPUT"
+          echo "### PR for ${WI}: ${url}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Hub callback (pull request)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ inputs.work_item }}
+          EVENT_TYPE: PullRequest
+          STATUS: ${{ job.status == 'success' && 'Success' || 'Failed' }}
+          PULL_REQUEST_URL: ${{ steps.pr.outputs.url }}
+          PULL_REQUEST_NUMBER: ${{ steps.pr.outputs.number }}
+          REVIEW_STATE: Pending
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

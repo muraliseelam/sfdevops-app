@@ -1,0 +1,89 @@
+# ci-selftest — tests for the pipeline itself. No org, no secrets.
+#
+#   unit       every Python and bash test under sf-pipeline/tests (including the promotion
+#              simulation and the real sfdx-git-delta delta test)
+#   lint       actionlint over every workflow and composite action reference
+#   matrix     proof that the deploy matrix adapts to the config: the same workflow expands
+#              to 3 environments for one config and 5 for another, with no file changes
+name: ci-selftest
+
+on:
+  push:
+    paths: ["sf-pipeline/**", ".github/**"]
+  pull_request:
+    paths: ["sf-pipeline/**", ".github/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install Salesforce CLI + sfdx-git-delta
+        run: bash sf-pipeline/scripts/install-sf.sh
+      - name: Python tests
+        run: python3 -m unittest discover -s sf-pipeline/tests -v
+      - name: Bash tests
+        run: |
+          set -euo pipefail
+          git config --global user.name ci && git config --global user.email ci@example.com
+          failed=0
+          for t in sf-pipeline/tests/test_*.sh; do
+            echo "::group::$t"
+            if bash "$t"; then echo "PASS $t"; else echo "::error::$t failed"; failed=1; fi
+            echo "::endgroup::"
+          done
+          exit $failed
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tgz actionlint
+          ./actionlint -color -shellcheck= -pyflakes=
+
+  matrix-plan:
+    runs-on: ubuntu-latest
+    outputs:
+      three: ${{ steps.three.outputs.auto_json }}
+      five: ${{ steps.five.outputs.auto_json }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: three
+        run: python3 sf-pipeline/scripts/plan.py --config sf-pipeline/tests/fixtures/config-3env.yml outputs
+      - id: five
+        run: python3 sf-pipeline/scripts/plan.py --config sf-pipeline/tests/fixtures/config-5env.yml outputs
+
+  matrix-three:
+    needs: matrix-plan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: ${{ fromJSON(needs.matrix-plan.outputs.three) }}
+    steps:
+      - run: echo "3-env config → ${{ matrix.env.order }}. ${{ matrix.env.name }} (branch ${{ matrix.env.branch }}, GitHub Environment ${{ matrix.env.gh_environment }}, ${{ matrix.env.test_level }})"
+
+  matrix-five:
+    needs: matrix-plan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: ${{ fromJSON(needs.matrix-plan.outputs.five) }}
+    steps:
+      - run: echo "5-env config → ${{ matrix.env.order }}. ${{ matrix.env.name }} (branch ${{ matrix.env.branch }}, GitHub Environment ${{ matrix.env.gh_environment }}, ${{ matrix.env.test_level }})"

@@ -1,0 +1,138 @@
+# assemble-release — build release/<name> from the work items on a CDO_Release__c.
+#
+# The release branch is cut from the production branch and merges ONLY the release's feature
+# branches, so production receives exactly what was planned, not everything that happens to
+# sit in the last environment. A conflict fails that release loudly and is reported to the
+# hub. sf-prod-release then releases `source_ref: release/<name>`.
+#
+# On schedule it assembles every hub release in status Assembling (needs a hub); on dispatch it
+# assembles the one release named in the inputs.
+name: assemble-release
+
+on:
+  schedule:
+    - cron: "41 5 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Hub CDO_Release__c id
+        type: string
+        required: false
+        default: ""
+      release_name:
+        description: Release name (becomes release/<name>)
+        type: string
+        required: true
+      work_items:
+        description: Comma-separated work item keys
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: assemble-release
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+
+      - name: Releases to assemble
+        id: releases
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          EVENT: ${{ github.event_name }}
+          IN_ID: ${{ inputs.release_id }}
+          IN_NAME: ${{ inputs.release_name }}
+          IN_WIS: ${{ inputs.work_items }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            python3 -c "import json,os; print(json.dumps([{'id': os.environ['IN_ID'], 'name': os.environ['IN_NAME'], 'workItems': [w.strip() for w in os.environ['IN_WIS'].split(',') if w.strip()], 'branches': {}}]))" > releases.json
+          elif [[ -z "$HUB_JWT_KEY" ]]; then
+            echo "::notice::Scheduled assembly needs a hub; nothing to do in GitHub-only mode."
+            echo "[]" > releases.json
+          else
+            bash sf-pipeline/scripts/install-sf.sh >/dev/null
+            bash sf-pipeline/scripts/auth-hub.sh >/dev/null
+            sf data query --target-org hub --json \
+              --query "SELECT Id, Name, (SELECT Name, Feature_Branch__c FROM Work_Items__r WHERE Status__c NOT IN ('Cancelled')) FROM CDO_Release__c WHERE Status__c = 'Assembling'" \
+              > raw.json
+            python3 - <<'PY'
+          import json
+          raw = json.load(open("raw.json"))
+          out = []
+          for r in (raw.get("result") or {}).get("records", []):
+              wis = ((r.get("Work_Items__r") or {}).get("records")) or []
+              out.append({"id": r["Id"], "name": r["Name"], "workItems": [w["Name"] for w in wis],
+                          "branches": {w["Name"]: w.get("Feature_Branch__c") for w in wis if w.get("Feature_Branch__c")}})
+          json.dump(out, open("releases.json", "w"))
+          PY
+          fi
+          echo "count=$(python3 -c "import json; print(len(json.load(open('releases.json'))))")" >> "$GITHUB_OUTPUT"
+          cat releases.json
+
+      - name: Assemble
+        if: steps.releases.outputs.count != '0'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          PROD: ${{ steps.cfg.outputs.prod_branch }}
+          PREFIX: ${{ steps.cfg.outputs.release_branch_prefix }}
+          FEATURE_PREFIX: ${{ steps.cfg.outputs.feature_prefix }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --quiet origin "+refs/heads/${PROD}:refs/remotes/origin/${PROD}"
+          failed=0
+          python3 -c "
+          import json
+          for r in json.load(open('releases.json')):
+              refs = [r['branches'].get(w) or '${FEATURE_PREFIX}' + w for w in r['workItems']]
+              print('\t'.join([r['id'] or '', r['name'], ','.join(refs)]))
+          " > plan.tsv
+          while IFS=$'\t' read -r rid name refs; do
+            branch="${PREFIX}$(tr -c 'A-Za-z0-9._-' '-' <<<"$name" | sed 's/-*$//')"
+            echo "::group::${branch}"
+            git checkout --quiet -B "$branch" "origin/${PROD}"
+            status=Success; message="Assembled ${branch}"; conflicts=""
+            for ref in ${refs//,/ }; do
+              if ! git fetch --no-tags --quiet origin "+refs/heads/${ref}:refs/remotes/origin/${ref}"; then
+                status=Failed; message="Feature branch ${ref} does not exist"; break
+              fi
+              if ! git merge --no-ff --no-edit -m "Release ${name}: merge ${ref}" "origin/${ref}" >/dev/null 2>&1; then
+                conflicts="$(git diff --name-only --diff-filter=U)"
+                git merge --abort
+                status=Failed; message="Merging ${ref} into ${branch} conflicted"; break
+              fi
+            done
+            if [[ "$status" == "Success" ]]; then
+              git push --quiet --force origin "HEAD:refs/heads/${branch}"
+              echo "- :white_check_mark: \`${branch}\` ← ${refs}" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::${message}"
+              echo "- :x: \`${branch}\`: ${message}" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+            fi
+            echo "::endgroup::"
+            RELEASE_ID="$rid" EVENT_TYPE=Release STATUS="$status" MESSAGE="$message ($branch)" \
+              CONFLICT_PATHS="$conflicts" COMMIT_SHA="$(git rev-parse HEAD)" PROMOTION_BRANCH="$branch" \
+              bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy || true
+          done < plan.tsv
+          exit $failed

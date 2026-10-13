@@ -1,0 +1,415 @@
+# sf-pr-validation — a PR into an environment branch: delta → quality gates → check-only deploy.
+#
+# The PR is a review gate, never a merge path. This workflow validates exactly what WOULD be
+# deployed: in `delta_baseline: target` mode it cuts a promotion branch from the PR's base,
+# merges the PR head into it, and validates delta(base_at_cut..merge). Nothing here merges.
+name: sf-pr-validation
+run-name: "Validate PR #${{ github.event.pull_request.number || inputs.pr_number }}"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: string
+      work_item:
+        description: Work item key (optional; derived from the branch otherwise)
+        required: false
+        type: string
+        default: ""
+      work_item_id:
+        description: Hub record id (optional)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sf-pr-validation-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      pr: ${{ steps.pr.outputs.number }}
+      base: ${{ steps.pr.outputs.base }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      pr_url: ${{ steps.pr.outputs.url }}
+      explicit_tests: ${{ steps.pr.outputs.explicit_tests }}
+      work_item: ${{ steps.decide.outputs.work_item }}
+      bypass: ${{ steps.bypass.outputs.bypass }}
+      r_name: ${{ steps.resolve.outputs.r_name }}
+      r_gh_environment: ${{ steps.resolve.outputs.r_gh_environment }}
+      r_test_level: ${{ steps.resolve.outputs.r_test_level }}
+      r_is_prod: ${{ steps.resolve.outputs.r_is_prod }}
+      source_path: ${{ steps.cfg.outputs.source_path }}
+      api_version: ${{ steps.cfg.outputs.api_version }}
+      node_version: ${{ steps.cfg.outputs.node_version }}
+      baseline_branch: ${{ steps.cfg.outputs.baseline_branch }}
+      delta_baseline: ${{ steps.cfg.outputs.delta_baseline }}
+      promotion_prefix: ${{ steps.cfg.outputs.promotion_prefix }}
+      coverage_threshold: ${{ steps.cfg.outputs.coverage_threshold }}
+      gate_pmd: ${{ steps.cfg.outputs.gate_pmd }}
+      gate_sonar: ${{ steps.cfg.outputs.gate_sonar }}
+      gate_jest: ${{ steps.cfg.outputs.gate_jest }}
+      gate_apex_coverage: ${{ steps.cfg.outputs.gate_apex_coverage }}
+      profiles_mode: ${{ steps.cfg.outputs.profiles_mode }}
+      destructive_tests: ${{ steps.cfg.outputs.destructive_tests }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+
+      - name: Pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json number,baseRefName,headRefName,headRefOid,title,body,isDraft,isCrossRepository,url,labels > pr.json
+          python3 - <<'PY'
+          import json, os, re
+          pr = json.load(open("pr.json"))
+          m = re.search(r"^\s*Specified-Tests:\s*(.+)$", pr.get("body") or "", re.M | re.I)
+          tests = ",".join(t.strip() for t in m.group(1).split(",") if t.strip()) if m else ""
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write(f"number={pr['number']}\nbase={pr['baseRefName']}\nhead_ref={pr['headRefName']}\n")
+              o.write(f"head_sha={pr['headRefOid']}\nurl={pr['url']}\ndraft={str(pr['isDraft']).lower()}\n")
+              o.write(f"fork={str(pr['isCrossRepository']).lower()}\nexplicit_tests={tests}\n")
+              o.write("title<<EOF_T\n" + pr["title"] + "\nEOF_T\n")
+          PY
+
+      - name: Config
+        id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+
+      - name: Resolve the base branch
+        id: resolve
+        run: python3 sf-pipeline/scripts/plan.py resolve "${{ steps.pr.outputs.base }}"
+
+      - name: Decide
+        id: decide
+        env:
+          FOUND: ${{ steps.resolve.outputs.r_found }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          TITLE: ${{ steps.pr.outputs.title }}
+          DRAFT: ${{ steps.pr.outputs.draft }}
+          FORK: ${{ steps.pr.outputs.fork }}
+          PROMO: ${{ steps.cfg.outputs.promotion_prefix }}
+          FEATURE: ${{ steps.cfg.outputs.feature_prefix }}
+          INPUT_WI: ${{ inputs.work_item }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          run=true
+          if [[ "$FOUND" != "true" ]]; then echo "::notice::The PR base is not a pipeline branch; nothing to validate."; run=false; fi
+          if [[ "$HEAD_REF" == "$PROMO"* ]]; then echo "::notice::Promotion PRs are merged by the pipeline after a deploy; not validated again."; run=false; fi
+          if [[ "$DRAFT" == "true" ]]; then echo "::notice::Draft PR; validation runs when it is ready for review."; run=false; fi
+          if [[ "$FORK" == "true" ]]; then echo "::warning::PRs from forks get no org secrets; validation skipped."; run=false; fi
+          wi="$INPUT_WI"
+          if [[ -z "$wi" && "$HEAD_REF" == "$FEATURE"* ]]; then wi="${HEAD_REF#"$FEATURE"}"; fi
+          if [[ -z "$wi" ]]; then wi="$(grep -oE '[A-Z][A-Z0-9]+-[0-9]+' <<<"$TITLE" | head -1 || true)"; fi
+          [[ -n "$wi" ]] || wi="PR-${PR}"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "work_item=$wi" >> "$GITHUB_OUTPUT"
+
+      - name: Bypass label (admin only, re-verified now)
+        id: bypass
+        if: steps.decide.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ steps.cfg.outputs.bypass_label }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          if ! python3 -c "import json,sys; sys.exit(0 if any(l['name']==sys.argv[1] for l in json.load(open('pr.json'))['labels']) else 1)" "$LABEL"; then
+            echo "bypass=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          who="$(bash sf-pipeline/scripts/gate.sh labeler "$PR" "$LABEL")"
+          if bash sf-pipeline/scripts/gate.sh is-admin "$who"; then
+            echo "::warning::Bypass label added by admin @${who}: tests and coverage enforcement are skipped for this validation."
+            echo "bypass=true" >> "$GITHUB_OUTPUT"
+          else
+            bash sf-pipeline/scripts/gate.sh drop-label "$PR" "$LABEL" \
+              "@${who} the \`${LABEL}\` label is honoured only from repository admins or maintainers, so it was removed. Quality gates stay on."
+            echo "bypass=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  changes:
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      target_sha_at_cut: ${{ steps.cut.outputs.target_sha_at_cut }}
+      has_changes: ${{ steps.delta.outputs.has_changes }}
+      has_apex: ${{ steps.delta.outputs.has_apex }}
+      has_js: ${{ steps.delta.outputs.has_js }}
+      has_lwc: ${{ steps.delta.outputs.has_lwc }}
+      component_count: ${{ steps.delta.outputs.component_count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Cut promotion branch (target model)
+        id: promo
+        if: needs.plan.outputs.delta_baseline == 'target'
+        uses: ./sf-pipeline/promote
+        with:
+          mode: cut
+          target_branch: ${{ needs.plan.outputs.base }}
+          target_env: ${{ needs.plan.outputs.r_name }}
+          work_item: ${{ needs.plan.outputs.work_item }}
+          feature_refs: ${{ needs.plan.outputs.head_sha }}
+          promotion_prefix: ${{ needs.plan.outputs.promotion_prefix }}
+          pr_number: ${{ needs.plan.outputs.pr }}
+
+      - name: Delta range
+        id: cut
+        env:
+          MODE: ${{ needs.plan.outputs.delta_baseline }}
+          PROMO_CUT: ${{ steps.promo.outputs.target_sha_at_cut }}
+          BASELINE: ${{ needs.plan.outputs.baseline_branch }}
+          HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" == "target" ]]; then
+            echo "target_sha_at_cut=$PROMO_CUT" >> "$GITHUB_OUTPUT"
+          else
+            git checkout --quiet "$HEAD_SHA"
+            echo "target_sha_at_cut=$(git rev-parse "origin/$BASELINE")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Salesforce CLI
+        run: bash sf-pipeline/scripts/install-sf.sh
+
+      - name: Delta
+        id: delta
+        env:
+          DELTA_FROM: ${{ steps.cut.outputs.target_sha_at_cut }}
+          DELTA_TO: HEAD
+          DELTA_OUTPUT: .sgd
+          SOURCE_PATH: ${{ needs.plan.outputs.source_path }}
+          SF_API_VERSION: ${{ needs.plan.outputs.api_version }}
+          BASELINE_BRANCH: ${{ needs.plan.outputs.base }}
+        run: bash sf-pipeline/scripts/delta.sh
+
+      - name: Manifest
+        run: |
+          args=(--package .sgd/package/package.xml --title "PR #${{ needs.plan.outputs.pr }} → ${{ needs.plan.outputs.r_name }}" --out manifest.md)
+          [[ -f .sgd/destructiveChanges/destructiveChanges.xml ]] && args+=(--destructive .sgd/destructiveChanges/destructiveChanges.xml)
+          python3 sf-pipeline/scripts/manifest_to_md.py "${args[@]}"
+          cat manifest.md >> "$GITHUB_STEP_SUMMARY"
+          cp "${{ steps.delta.outputs.changed_files_file }}" changed-files.txt || touch changed-files.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: delta-pr-${{ needs.plan.outputs.pr }}
+          path: |
+            .sgd/
+            manifest.md
+            changed-files.txt
+          include-hidden-files: true
+          retention-days: 14
+
+      - name: Hub callback (conflict)
+        if: failure() && steps.promo.outputs.conflict == 'true'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ needs.plan.outputs.work_item }}
+          EVENT_TYPE: Conflict
+          STATUS: Failed
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          CONFLICT_PATHS: ${{ steps.promo.outputs.conflict_paths }}
+          PULL_REQUEST_URL: ${{ needs.plan.outputs.pr_url }}
+          PULL_REQUEST_NUMBER: ${{ needs.plan.outputs.pr }}
+          MESSAGE: Promotion merge into ${{ needs.plan.outputs.base }} conflicted
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+  quality:
+    needs: [plan, changes]
+    if: >-
+      needs.changes.outputs.has_changes == 'true' &&
+      (needs.changes.outputs.has_apex == 'true' || needs.changes.outputs.has_js == 'true' || needs.changes.outputs.has_lwc == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild the validated tree
+        if: needs.plan.outputs.delta_baseline == 'target'
+        env:
+          CUT_SHA: ${{ needs.changes.outputs.target_sha_at_cut }}
+          TARGET_BRANCH: ${{ needs.plan.outputs.base }}
+          TARGET_ENV: ${{ needs.plan.outputs.r_name }}
+          WORK_ITEM: ${{ needs.plan.outputs.work_item }}
+          FEATURE_REFS: ${{ needs.plan.outputs.head_sha }}
+          PROMOTION_PREFIX: ${{ needs.plan.outputs.promotion_prefix }}
+        run: bash sf-pipeline/scripts/promote.sh cut
+
+      - name: Check out the PR head (baseline model)
+        if: needs.plan.outputs.delta_baseline != 'target'
+        run: git checkout --quiet "${{ needs.plan.outputs.head_sha }}"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: delta-pr-${{ needs.plan.outputs.pr }}
+
+      - name: Quality gates
+        uses: ./sf-pipeline/quality
+        with:
+          has_apex: ${{ needs.changes.outputs.has_apex }}
+          has_js: ${{ needs.changes.outputs.has_js }}
+          has_lwc: ${{ needs.changes.outputs.has_lwc }}
+          changed_files_file: changed-files.txt
+          source_path: ${{ needs.plan.outputs.source_path }}
+          gate_pmd: ${{ needs.plan.outputs.gate_pmd }}
+          gate_sonar: ${{ needs.plan.outputs.gate_sonar }}
+          gate_jest: ${{ needs.plan.outputs.gate_jest }}
+          node_version: ${{ needs.plan.outputs.node_version }}
+          sonar_token: ${{ secrets.SONAR_TOKEN }}
+          sonar_host_url: ${{ secrets.SONAR_HOST_URL }}
+          advisory: ${{ needs.plan.outputs.bypass }}
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: findings-pr-${{ needs.plan.outputs.pr }}
+          path: findings.json
+          if-no-files-found: ignore
+
+  validate:
+    needs: [plan, changes, quality]
+    if: >-
+      always() && needs.plan.outputs.run == 'true' && needs.changes.result == 'success' &&
+      (needs.quality.result == 'success' || needs.quality.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.r_gh_environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild the validated tree
+        if: needs.plan.outputs.delta_baseline == 'target'
+        env:
+          CUT_SHA: ${{ needs.changes.outputs.target_sha_at_cut }}
+          TARGET_BRANCH: ${{ needs.plan.outputs.base }}
+          TARGET_ENV: ${{ needs.plan.outputs.r_name }}
+          WORK_ITEM: ${{ needs.plan.outputs.work_item }}
+          FEATURE_REFS: ${{ needs.plan.outputs.head_sha }}
+          PROMOTION_PREFIX: ${{ needs.plan.outputs.promotion_prefix }}
+        run: bash sf-pipeline/scripts/promote.sh cut
+
+      - name: Check out the PR head (baseline model)
+        if: needs.plan.outputs.delta_baseline != 'target'
+        run: git checkout --quiet "${{ needs.plan.outputs.head_sha }}"
+
+      - name: Hub callback (running)
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ needs.plan.outputs.work_item }}
+          EVENT_TYPE: Validation
+          STATUS: Running
+          CHECK_ONLY: "true"
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          COMMIT_SHA: ${{ needs.plan.outputs.head_sha }}
+          PULL_REQUEST_URL: ${{ needs.plan.outputs.pr_url }}
+          PULL_REQUEST_NUMBER: ${{ needs.plan.outputs.pr }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Check-only deploy
+        id: deploy
+        uses: ./sf-pipeline/deploy
+        with:
+          environment: ${{ needs.plan.outputs.r_name }}
+          ref: ${{ needs.plan.outputs.head_sha }}
+          check_only: "true"
+          test_level: ${{ needs.plan.outputs.r_test_level }}
+          manifest_title: "PR #${{ needs.plan.outputs.pr }} → ${{ needs.plan.outputs.r_name }} (validation)"
+          baseline_branch: ${{ needs.plan.outputs.base }}
+          delta_from: ${{ needs.changes.outputs.target_sha_at_cut }}
+          source_path: ${{ needs.plan.outputs.source_path }}
+          api_version: ${{ needs.plan.outputs.api_version }}
+          node_version: ${{ needs.plan.outputs.node_version }}
+          coverage_gate: ${{ needs.plan.outputs.gate_apex_coverage }}
+          coverage_threshold: ${{ needs.plan.outputs.coverage_threshold }}
+          profiles_mode: ${{ needs.plan.outputs.profiles_mode }}
+          bypass: ${{ needs.plan.outputs.bypass }}
+          is_production: ${{ needs.plan.outputs.r_is_prod }}
+          destructive_test_names: ${{ needs.plan.outputs.r_is_prod == 'true' && needs.plan.outputs.destructive_tests || '' }}
+          specified_tests: ${{ needs.plan.outputs.explicit_tests }}
+          sf_consumer_key: ${{ secrets.SF_CONSUMER_KEY }}
+          sf_username: ${{ secrets.SF_USERNAME }}
+          sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
+          sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+
+      - uses: actions/download-artifact@v8
+        if: always() && needs.quality.result == 'success'
+        with:
+          name: findings-pr-${{ needs.plan.outputs.pr }}
+
+      - name: Report
+        if: always()
+        uses: ./sf-pipeline/report
+        with:
+          kind: validation
+          environment: ${{ needs.plan.outputs.r_name }}
+          title: "Validation against `${{ needs.plan.outputs.r_name }}`"
+          outcome: ${{ steps.deploy.outputs.outcome || 'failure' }}
+          deploy_id: ${{ steps.deploy.outputs.deploy_id }}
+          coverage_percent: ${{ steps.deploy.outputs.coverage_percent }}
+          coverage_note: ${{ steps.deploy.outputs.coverage_note }}
+          tests_passed: ${{ steps.deploy.outputs.tests_passed }}
+          test_level: ${{ steps.deploy.outputs.test_level_used }}
+          tests: ${{ steps.deploy.outputs.tests_used }}
+          failing_methods: ${{ steps.deploy.outputs.failing_methods }}
+          head_sha: ${{ needs.plan.outputs.head_sha }}
+          pr_number: ${{ needs.plan.outputs.pr }}
+
+      - name: Hub callback (result)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ needs.plan.outputs.work_item }}
+          EVENT_TYPE: Validation
+          STATUS: ${{ steps.deploy.outputs.outcome == 'success' && 'Success' || (steps.deploy.outputs.outcome == 'no_changes' && 'Success' || 'Failed') }}
+          CHECK_ONLY: "true"
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          COMMIT_SHA: ${{ needs.plan.outputs.head_sha }}
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          COVERAGE_PERCENT: ${{ steps.deploy.outputs.coverage_percent }}
+          TESTS_PASSED: ${{ steps.deploy.outputs.tests_passed }}
+          FAILING_METHODS: ${{ steps.deploy.outputs.failing_methods }}
+          TEST_LEVEL: ${{ steps.deploy.outputs.test_level_used }}
+          COMPONENT_COUNT: ${{ needs.changes.outputs.component_count }}
+          MESSAGE: ${{ steps.deploy.outputs.coverage_note }}
+          PULL_REQUEST_URL: ${{ needs.plan.outputs.pr_url }}
+          PULL_REQUEST_NUMBER: ${{ needs.plan.outputs.pr }}
+          FINDINGS_JSON_FILE: findings.json
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

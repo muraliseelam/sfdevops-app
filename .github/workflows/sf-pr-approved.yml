@@ -1,0 +1,151 @@
+# sf-pr-approved — an approval on a PR into an environment branch.
+#
+# Records the approval in the hub and STARTS the entry-hop promotion by itself. Making the
+# developer return to the record and press a button to start the very deploy the approval
+# authorised is a step with no decision in it. The promotion is held back only when the
+# latest validation of the PR's head commit did not pass or measured coverage is below the
+# minimum. Nothing here merges: sf-int-deploy deploys, then merges the promotion branch.
+#
+# GitHub runs pull_request_review workflows from the PR's BASE branch, so this file (and
+# everything it calls) must exist on every environment branch. Recreate the env branches from
+# the baseline after changing the pipeline.
+name: sf-pr-approved
+run-name: "Approval on PR #${{ github.event.pull_request.number }}"
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  approval:
+    if: >-
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.decide.outputs.proceed }}
+      method: ${{ steps.decide.outputs.method }}
+      approver: ${{ steps.decide.outputs.approver }}
+      work_item: ${{ steps.decide.outputs.work_item }}
+      hold_reason: ${{ steps.hold.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+
+      - name: Config
+        id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+
+      - name: Resolve the base branch
+        id: resolve
+        run: python3 sf-pipeline/scripts/plan.py resolve "${{ github.event.pull_request.base.ref }}"
+
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          LABEL: ${{ github.event.label.name }}
+          APPROVED_LABEL: ${{ steps.cfg.outputs.approved_label }}
+          REVIEWER: ${{ github.event.review.user.login }}
+          SENDER: ${{ github.event.sender.login }}
+          FOUND: ${{ steps.resolve.outputs.r_found }}
+          IS_PROD: ${{ steps.resolve.outputs.r_is_prod }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          PROMO: ${{ steps.cfg.outputs.promotion_prefix }}
+          FEATURE: ${{ steps.cfg.outputs.feature_prefix }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          proceed=true
+          if [[ "$EVENT" == "pull_request" ]]; then
+            method=label; approver="$SENDER"
+            [[ "$LABEL" == "$APPROVED_LABEL" ]] || { echo "Label '$LABEL' is not the approval label."; proceed=false; }
+          else
+            method=review; approver="$REVIEWER"
+          fi
+          [[ "$FOUND" == "true" ]] || { echo "::notice::Base is not a pipeline branch."; proceed=false; }
+          [[ "$IS_PROD" != "true" ]] || { echo "::notice::Production is released by sf-prod-release, not by PR approval."; proceed=false; }
+          [[ "$HEAD_REF" != "$PROMO"* ]] || { echo "::notice::Promotion PRs are merged by the pipeline."; proceed=false; }
+          wi=""
+          if [[ "$HEAD_REF" == "$FEATURE"* ]]; then wi="${HEAD_REF#"$FEATURE"}"; fi
+          [[ -n "$wi" ]] || wi="$(grep -oE '[A-Z][A-Z0-9]+-[0-9]+' <<<"$TITLE" | head -1 || true)"
+          [[ -n "$wi" ]] || wi="PR-${PR}"
+          { echo "proceed=$proceed"; echo "method=$method"; echo "approver=$approver"; echo "work_item=$wi"; } >> "$GITHUB_OUTPUT"
+
+      - name: Coverage and validation hold
+        id: hold
+        if: steps.decide.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MINIMUM: ${{ steps.cfg.outputs.coverage_threshold }}
+          ENV_NAME: ${{ steps.resolve.outputs.r_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments?per_page=100" --paginate \
+            --jq '.[].body' > comments.txt || true
+          python3 - <<'PY'
+          import os, re
+          text = open("comments.txt", encoding="utf-8").read()
+          sha, env_name = os.environ["HEAD_SHA"], os.environ["ENV_NAME"]
+          minimum = float(os.environ["MINIMUM"] or 0)
+          marks = re.findall(r"<!-- sfdevops:validation sha=(\S*) outcome=(\S*) coverage=(\S*) tests_passed=(\S*) -->", text)
+          mine = [m for m in marks if m[0] == sha]
+          reason = ""
+          if not mine:
+              reason = f"no validation has reported for head commit {sha[:12]} yet"
+          else:
+              _, outcome, coverage, _ = mine[-1]
+              if outcome not in ("success", "no_changes"):
+                  reason = f"the latest validation of {sha[:12]} did not pass ({outcome})"
+              elif coverage and float(coverage) < minimum:
+                  reason = f"measured coverage {coverage}% is below the minimum {minimum:g}%"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write(f"reason={reason}\n")
+          print(reason or "validation passed for the head commit")
+          PY
+
+      - name: Hub callback (approval)
+        if: steps.decide.outputs.proceed == 'true'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ steps.decide.outputs.work_item }}
+          EVENT_TYPE: Approval
+          STATUS: Success
+          ENVIRONMENT: ${{ steps.resolve.outputs.r_name }}
+          APPROVER: ${{ steps.decide.outputs.approver }}
+          APPROVAL_METHOD: ${{ steps.decide.outputs.method == 'review' && 'Review' || 'Label' }}
+          PULL_REQUESTS_APPROVED: "true"
+          REVIEW_STATE: Approved
+          PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          MESSAGE: ${{ steps.hold.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+  deploy:
+    needs: approval
+    if: needs.approval.outputs.proceed == 'true'
+    uses: ./.github/workflows/sf-int-deploy.yml
+    with:
+      pr_number: ${{ format('{0}', github.event.pull_request.number) }}
+      work_item: ${{ needs.approval.outputs.work_item }}
+      approver: ${{ needs.approval.outputs.approver }}
+      method: ${{ needs.approval.outputs.method }}
+      hold_reason: ${{ needs.approval.outputs.hold_reason }}
+    secrets: inherit

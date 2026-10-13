@@ -56,6 +56,9 @@ outputs:
   head_sha:
     description: HEAD after the cut (the deployable tree)
     value: ${{ steps.run.outputs.head_sha }}
+  head_tree:
+    description: Tree hash of HEAD after the cut (proves a rebuilt tree is identical)
+    value: ${{ steps.run.outputs.head_tree }}
   merged_refs:
     description: Feature refs actually merged in
     value: ${{ steps.run.outputs.merged_refs }}

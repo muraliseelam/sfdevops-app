@@ -1,0 +1,72 @@
+# sync-env-branches — reconcile environment branches with the baseline (back-promotion).
+#
+# After a production release (or a hotfix straight to the baseline), the lower environments
+# must catch up. Each environment gets a normal promotion: cut from the env branch, merge the
+# baseline, deploy, and merge only after the deploy succeeds. Environment branches are merged,
+# never reset or force-pushed. With deploy=false nothing is merged (merging without deploying
+# would break deploy-then-merge); the run only validates and reports the divergence.
+name: sync-env-branches
+run-name: "Sync ${{ inputs.target_env || 'all environments' }} with the baseline${{ inputs.deploy == 'false' && ' (report only)' || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: Environment to sync (blank = every environment)
+        type: string
+        required: false
+        default: ""
+      deploy:
+        description: "true = deploy then merge; false = validate and report only"
+        type: string
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.envs.outputs.envs }}
+      baseline: ${{ steps.cfg.outputs.baseline_branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - id: envs
+        env:
+          AUTO: ${{ steps.cfg.outputs.auto_json }}
+          ONLY: ${{ inputs.target_env }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          envs = [e["name"] for e in json.loads(os.environ["AUTO"])]
+          only = os.environ["ONLY"].strip()
+          if only:
+              if only not in envs:
+                  raise SystemExit(f"::error::unknown environment '{only}' (known: {', '.join(envs)})")
+              envs = [only]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write("envs=" + json.dumps(envs) + "\n")
+          print(envs)
+          PY
+
+  sync:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.plan.outputs.envs) }}
+    uses: ./.github/workflows/sf-promote.yml
+    with:
+      target_env: ${{ matrix.env }}
+      source_branch: ${{ needs.plan.outputs.baseline }}
+      label: sync-${{ needs.plan.outputs.baseline }}
+      check_only: ${{ inputs.deploy == 'false' && 'true' || 'false' }}
+    secrets: inherit

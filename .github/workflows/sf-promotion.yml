@@ -1,0 +1,270 @@
+# sf-promotion — the Copado path. Story-level promotion of named work items into one
+# environment, dispatched by the hub (CDOPromotionDispatcher) or reused by ops workflows.
+#
+#   1. cut promotion/<WI>-to-<env> from the TARGET env branch
+#   2. merge in ONLY the named feature branches (conflict → comment, callback, fail)
+#   3. deploy delta(target_sha_at_cut..promotion HEAD) — the target-baseline model, whatever
+#      `delta_baseline` says, because the baseline here IS the target branch
+#   4. only after success, merge the promotion into the target (refused if it moved)
+#
+# Production is not a target here: it goes through sf-prod-release (validated payload +
+# required reviewer).
+name: sf-promotion
+run-name: "Promote ${{ inputs.work_items }} → ${{ inputs.target_env }} · ${{ inputs.promotion_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      promotion_id:
+        description: Hub CDO_Promotion__c id
+        type: string
+        required: false
+        default: ""
+      work_items:
+        description: Comma-separated work item keys (WI-0001,WI-0002)
+        type: string
+        required: true
+      feature_refs:
+        description: Comma-separated feature branches (blank = feature prefix + each key)
+        type: string
+        required: false
+        default: ""
+      target_env:
+        description: Target environment pipeline key
+        type: string
+        required: true
+      test_level:
+        description: Override the environment's test level (blank = configured)
+        type: string
+        required: false
+        default: ""
+      specified_tests:
+        description: Explicit test classes (comma-separated)
+        type: string
+        required: false
+        default: ""
+      check_only:
+        description: "true = validate only, never merge"
+        type: string
+        required: false
+        default: "false"
+      allow_destructive:
+        description: Apply deletions
+        type: string
+        required: false
+        default: "true"
+  workflow_call:
+    inputs:
+      promotion_id: { type: string, required: false, default: "" }
+      work_items: { type: string, required: true }
+      feature_refs: { type: string, required: false, default: "" }
+      target_env: { type: string, required: true }
+      test_level: { type: string, required: false, default: "" }
+      specified_tests: { type: string, required: false, default: "" }
+      check_only: { type: string, required: false, default: "false" }
+      allow_destructive: { type: string, required: false, default: "true" }
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      r_name: ${{ steps.target.outputs.r_name }}
+      r_branch: ${{ steps.target.outputs.r_branch }}
+      r_gh_environment: ${{ steps.target.outputs.r_gh_environment }}
+      test_level: ${{ steps.refs.outputs.test_level }}
+      feature_refs: ${{ steps.refs.outputs.feature_refs }}
+      label: ${{ steps.refs.outputs.label }}
+      source_path: ${{ steps.cfg.outputs.source_path }}
+      api_version: ${{ steps.cfg.outputs.api_version }}
+      node_version: ${{ steps.cfg.outputs.node_version }}
+      promotion_prefix: ${{ steps.cfg.outputs.promotion_prefix }}
+      coverage_threshold: ${{ steps.cfg.outputs.coverage_threshold }}
+      gate_apex_coverage: ${{ steps.cfg.outputs.gate_apex_coverage }}
+      profiles_mode: ${{ steps.cfg.outputs.profiles_mode }}
+      notify_webex: ${{ steps.cfg.outputs.notify_webex }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - name: Config
+        id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - name: Target
+        id: target
+        run: python3 sf-pipeline/scripts/plan.py target "${{ inputs.target_env }}"
+      - name: Refuse production
+        if: steps.target.outputs.r_is_prod == 'true'
+        run: |
+          echo "::error::Production is released through sf-prod-release (validated payload + required reviewer), not sf-promotion."
+          exit 1
+      - name: Feature refs and test level
+        id: refs
+        env:
+          WORK_ITEMS: ${{ inputs.work_items }}
+          FEATURE_REFS: ${{ inputs.feature_refs }}
+          PREFIX: ${{ steps.cfg.outputs.feature_prefix }}
+          OVERRIDE: ${{ inputs.test_level }}
+          CONFIGURED: ${{ steps.target.outputs.r_test_level }}
+        run: |
+          set -euo pipefail
+          refs="$FEATURE_REFS"
+          if [[ -z "$refs" ]]; then
+            refs="$(tr ',' '\n' <<<"$WORK_ITEMS" | sed 's/^ *//;s/ *$//' | grep -v '^$' | sed "s#^#${PREFIX}#" | paste -sd, -)"
+          fi
+          label="$(tr ',' '\n' <<<"$WORK_ITEMS" | sed 's/^ *//;s/ *$//' | grep -v '^$' | paste -sd+ -)"
+          [[ ${#label} -le 60 ]] || label="${label:0:40}-and-more"
+          { echo "feature_refs=$refs"; echo "label=$label"; echo "test_level=${OVERRIDE:-$CONFIGURED}"; } >> "$GITHUB_OUTPUT"
+
+  promote:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.r_gh_environment }}
+    concurrency:
+      group: sf-deploy-${{ needs.plan.outputs.r_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Hub callback (running)
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          PROMOTION_ID: ${{ inputs.promotion_id }}
+          WORK_ITEM: ${{ inputs.work_items }}
+          EVENT_TYPE: ${{ inputs.check_only == 'true' && 'Validation' || 'Deploy' }}
+          STATUS: Running
+          CHECK_ONLY: ${{ inputs.check_only }}
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Cut promotion branch
+        id: promo
+        uses: ./sf-pipeline/promote
+        with:
+          mode: cut
+          target_branch: ${{ needs.plan.outputs.r_branch }}
+          target_env: ${{ needs.plan.outputs.r_name }}
+          work_item: ${{ needs.plan.outputs.label }}
+          feature_refs: ${{ needs.plan.outputs.feature_refs }}
+          promotion_prefix: ${{ needs.plan.outputs.promotion_prefix }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Deploy delta(target_at_cut..promotion)
+        id: deploy
+        uses: ./sf-pipeline/deploy
+        with:
+          environment: ${{ needs.plan.outputs.r_name }}
+          ref: ${{ steps.promo.outputs.head_sha }}
+          check_only: ${{ inputs.check_only }}
+          test_level: ${{ needs.plan.outputs.test_level }}
+          manifest_title: "${{ inputs.work_items }} → ${{ needs.plan.outputs.r_name }}"
+          baseline_branch: ${{ needs.plan.outputs.r_branch }}
+          delta_from: ${{ steps.promo.outputs.target_sha_at_cut }}
+          source_path: ${{ needs.plan.outputs.source_path }}
+          api_version: ${{ needs.plan.outputs.api_version }}
+          node_version: ${{ needs.plan.outputs.node_version }}
+          coverage_gate: ${{ needs.plan.outputs.gate_apex_coverage }}
+          coverage_threshold: ${{ needs.plan.outputs.coverage_threshold }}
+          profiles_mode: ${{ needs.plan.outputs.profiles_mode }}
+          specified_tests: ${{ inputs.specified_tests }}
+          allow_destructive: ${{ inputs.allow_destructive }}
+          sf_consumer_key: ${{ secrets.SF_CONSUMER_KEY }}
+          sf_username: ${{ secrets.SF_USERNAME }}
+          sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
+          sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+
+      - name: Merge the promotion (only after a successful deploy)
+        id: merge
+        if: inputs.check_only != 'true' && (steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes')
+        uses: ./sf-pipeline/promote
+        with:
+          mode: merge
+          target_branch: ${{ needs.plan.outputs.r_branch }}
+          target_env: ${{ needs.plan.outputs.r_name }}
+          work_item: ${{ needs.plan.outputs.label }}
+          target_sha_at_cut: ${{ steps.promo.outputs.target_sha_at_cut }}
+          deployed_sha: ${{ steps.promo.outputs.head_sha }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Hub callback (merge status)
+        if: always() && steps.merge.outcome != 'skipped'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          PROMOTION_ID: ${{ inputs.promotion_id }}
+          WORK_ITEM: ${{ inputs.work_items }}
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          TARGET_BRANCH: ${{ needs.plan.outputs.r_branch }}
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+          MERGED: ${{ steps.merge.outputs.merged }}
+          REASON: ${{ steps.merge.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh merge-status merge
+
+      - name: Report
+        if: always()
+        uses: ./sf-pipeline/report
+        with:
+          kind: promotion
+          environment: ${{ needs.plan.outputs.r_name }}
+          title: "Promotion of ${{ inputs.work_items }} to `${{ needs.plan.outputs.r_name }}`"
+          outcome: ${{ steps.deploy.outputs.outcome || 'failure' }}
+          deploy_id: ${{ steps.deploy.outputs.deploy_id }}
+          coverage_percent: ${{ steps.deploy.outputs.coverage_percent }}
+          coverage_note: ${{ steps.deploy.outputs.coverage_note }}
+          tests_passed: ${{ steps.deploy.outputs.tests_passed }}
+          test_level: ${{ steps.deploy.outputs.test_level_used }}
+          tests: ${{ steps.deploy.outputs.tests_used }}
+          failing_methods: ${{ steps.deploy.outputs.failing_methods }}
+          head_sha: ${{ steps.promo.outputs.head_sha }}
+          extra_md: ${{ steps.merge.outputs.reason && format('**Merge:** {0}', steps.merge.outputs.reason) || '' }}
+
+      - name: Hub callback (result)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          PROMOTION_ID: ${{ inputs.promotion_id }}
+          WORK_ITEM: ${{ inputs.work_items }}
+          EVENT_TYPE: ${{ steps.promo.outputs.conflict == 'true' && 'Conflict' || (inputs.check_only == 'true' && 'Validation' || 'Deploy') }}
+          STATUS: ${{ (steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes') && 'Success' || 'Failed' }}
+          CHECK_ONLY: ${{ inputs.check_only }}
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          COMMIT_SHA: ${{ steps.merge.outputs.merge_sha || steps.promo.outputs.head_sha }}
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          COVERAGE_PERCENT: ${{ steps.deploy.outputs.coverage_percent }}
+          TESTS_PASSED: ${{ steps.deploy.outputs.tests_passed }}
+          FAILING_METHODS: ${{ steps.deploy.outputs.failing_methods }}
+          TEST_LEVEL: ${{ steps.deploy.outputs.test_level_used }}
+          COMPONENT_COUNT: ${{ steps.deploy.outputs.component_count }}
+          PROMOTION_BRANCH: ${{ steps.promo.outputs.promotion_branch }}
+          TARGET_SHA_AT_CUT: ${{ steps.promo.outputs.target_sha_at_cut }}
+          CONFLICT_PATHS: ${{ steps.promo.outputs.conflict_paths }}
+          MESSAGE: ${{ steps.merge.outputs.reason || steps.deploy.outputs.coverage_note }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Notify
+        if: always() && needs.plan.outputs.notify_webex == 'true'
+        env:
+          NOTIFY_WEBEX: "true"
+          WEBEX_BOT_TOKEN: ${{ secrets.WEBEX_BOT_TOKEN }}
+          WEBEX_ROOM_ID: ${{ secrets.WEBEX_ROOM_ID }}
+          WEBEX_WEBHOOK_URL: ${{ secrets.WEBEX_WEBHOOK_URL }}
+        run: |
+          bash sf-pipeline/scripts/webex-notify.sh "Promotion **${{ inputs.work_items }}** → \`${{ needs.plan.outputs.r_name }}\`: ${{ steps.deploy.outputs.outcome || 'failure' }} — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

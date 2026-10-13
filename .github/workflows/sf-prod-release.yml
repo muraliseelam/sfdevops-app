@@ -1,0 +1,326 @@
+# sf-prod-release — validate → required-reviewer gate → quick-deploy → merge → tag → release.
+#
+# 1. validate: cut promotion/release-<name>-to-<prod> from the production branch, merge the
+#    release source (the last env branch, or a release/* branch), and validate that tree
+#    against production in the REVIEWER-FREE GitHub Environment. The reviewer therefore
+#    approves a payload that has already passed.
+# 2. deploy: runs in the production GitHub Environment WITH required reviewers. It rebuilds the
+#    promotion tree from the recorded SHAs, proves it is byte-identical to the validated tree,
+#    quick-deploys the validated deploy id (no second test run), and only then merges, tags and
+#    publishes a GitHub Release.
+name: sf-prod-release
+run-name: "Release ${{ inputs.release_name || github.run_number }} to production · ${{ inputs.release_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Hub CDO_Release__c id
+        type: string
+        required: false
+        default: ""
+      release_name:
+        description: Release name (blank = today's date)
+        type: string
+        required: false
+        default: ""
+      source_ref:
+        description: Branch to release (blank = the last environment branch)
+        type: string
+        required: false
+        default: ""
+      test_level:
+        description: Override the production test level (blank = configured)
+        type: string
+        required: false
+        default: ""
+      specified_tests:
+        description: Explicit test classes (comma-separated)
+        type: string
+        required: false
+        default: ""
+      allow_destructive:
+        description: Apply deletions
+        type: string
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: sf-prod-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      prod_name: ${{ steps.cfg.outputs.prod_name }}
+      prod_branch: ${{ steps.cfg.outputs.prod_branch }}
+      deploy_env: ${{ steps.cfg.outputs.prod_deploy_environment }}
+      validate_env: ${{ steps.cfg.outputs.prod_validate_environment }}
+      test_level: ${{ steps.meta.outputs.test_level }}
+      destructive_tests: ${{ steps.cfg.outputs.destructive_tests }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
+      name: ${{ steps.meta.outputs.name }}
+      label: ${{ steps.meta.outputs.label }}
+      source_path: ${{ steps.cfg.outputs.source_path }}
+      api_version: ${{ steps.cfg.outputs.api_version }}
+      node_version: ${{ steps.cfg.outputs.node_version }}
+      promotion_prefix: ${{ steps.cfg.outputs.promotion_prefix }}
+      coverage_threshold: ${{ steps.cfg.outputs.coverage_threshold }}
+      gate_apex_coverage: ${{ steps.cfg.outputs.gate_apex_coverage }}
+      profiles_mode: ${{ steps.cfg.outputs.profiles_mode }}
+      notify_webex: ${{ steps.cfg.outputs.notify_webex }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - name: Config
+        id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - name: Release metadata
+        id: meta
+        env:
+          NAME: ${{ inputs.release_name }}
+          SOURCE: ${{ inputs.source_ref }}
+          LAST: ${{ steps.cfg.outputs.last_branch }}
+          OVERRIDE: ${{ inputs.test_level }}
+          CONFIGURED: ${{ steps.cfg.outputs.prod_test_level }}
+        run: |
+          set -euo pipefail
+          name="${NAME:-$(date -u +%Y-%m-%d)-${GITHUB_RUN_NUMBER}}"
+          label="release-$(tr -c 'A-Za-z0-9._-' '-' <<<"$name" | sed 's/-*$//')"
+          { echo "name=$name"; echo "label=$label"; echo "source_ref=${SOURCE:-$LAST}"; echo "test_level=${OVERRIDE:-$CONFIGURED}"; } >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.validate_env }}
+    outputs:
+      outcome: ${{ steps.deploy.outputs.outcome }}
+      validated_id: ${{ steps.deploy.outputs.deploy_id }}
+      target_sha_at_cut: ${{ steps.promo.outputs.target_sha_at_cut }}
+      source_sha: ${{ steps.src.outputs.sha }}
+      head_tree: ${{ steps.promo.outputs.head_tree }}
+      coverage_percent: ${{ steps.deploy.outputs.coverage_percent }}
+      tests_used: ${{ steps.deploy.outputs.tests_used }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the release source
+        id: src
+        env:
+          SOURCE: ${{ needs.plan.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin "+refs/heads/${SOURCE#origin/}:refs/remotes/origin/${SOURCE#origin/}"
+          echo "sha=$(git rev-parse "origin/${SOURCE#origin/}")" >> "$GITHUB_OUTPUT"
+
+      - name: Hub callback (validating)
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EVENT_TYPE: Release
+          STATUS: Running
+          MESSAGE: Validating
+          CHECK_ONLY: "true"
+          ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
+          COMMIT_SHA: ${{ steps.src.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Cut promotion branch from production
+        id: promo
+        uses: ./sf-pipeline/promote
+        with:
+          mode: cut
+          target_branch: ${{ needs.plan.outputs.prod_branch }}
+          target_env: ${{ needs.plan.outputs.prod_name }}
+          work_item: ${{ needs.plan.outputs.label }}
+          feature_refs: ${{ steps.src.outputs.sha }}
+          promotion_prefix: ${{ needs.plan.outputs.promotion_prefix }}
+
+      - name: Validate against production
+        id: deploy
+        uses: ./sf-pipeline/deploy
+        with:
+          environment: ${{ needs.plan.outputs.prod_name }}
+          ref: ${{ steps.promo.outputs.head_sha }}
+          check_only: "true"
+          test_level: ${{ needs.plan.outputs.test_level }}
+          manifest_title: "Release ${{ needs.plan.outputs.name }} → ${{ needs.plan.outputs.prod_name }}"
+          baseline_branch: ${{ needs.plan.outputs.prod_branch }}
+          delta_from: ${{ steps.promo.outputs.target_sha_at_cut }}
+          source_path: ${{ needs.plan.outputs.source_path }}
+          api_version: ${{ needs.plan.outputs.api_version }}
+          node_version: ${{ needs.plan.outputs.node_version }}
+          coverage_gate: ${{ needs.plan.outputs.gate_apex_coverage }}
+          coverage_threshold: ${{ needs.plan.outputs.coverage_threshold }}
+          profiles_mode: ${{ needs.plan.outputs.profiles_mode }}
+          is_production: "true"
+          destructive_test_names: ${{ needs.plan.outputs.destructive_tests }}
+          specified_tests: ${{ inputs.specified_tests }}
+          allow_destructive: ${{ inputs.allow_destructive }}
+          sf_consumer_key: ${{ secrets.SF_CONSUMER_KEY }}
+          sf_username: ${{ secrets.SF_USERNAME }}
+          sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
+          sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-manifest
+          path: manifest.md
+          if-no-files-found: ignore
+
+      - name: Hub callback (validation result)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EVENT_TYPE: Release
+          STATUS: ${{ steps.deploy.outputs.outcome == 'success' && 'Running' || 'Failed' }}
+          MESSAGE: ${{ steps.deploy.outputs.outcome == 'success' && 'Validated; waiting for the production reviewer' || 'Production validation failed' }}
+          CHECK_ONLY: "true"
+          ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          COVERAGE_PERCENT: ${{ steps.deploy.outputs.coverage_percent }}
+          TESTS_PASSED: ${{ steps.deploy.outputs.tests_passed }}
+          FAILING_METHODS: ${{ steps.deploy.outputs.failing_methods }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+  deploy:
+    needs: [plan, validate]
+    if: needs.validate.outputs.outcome == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.deploy_env }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Rebuild the validated tree
+        id: rebuild
+        env:
+          CUT_SHA: ${{ needs.validate.outputs.target_sha_at_cut }}
+          TARGET_BRANCH: ${{ needs.plan.outputs.prod_branch }}
+          TARGET_ENV: ${{ needs.plan.outputs.prod_name }}
+          WORK_ITEM: ${{ needs.plan.outputs.label }}
+          FEATURE_REFS: ${{ needs.validate.outputs.source_sha }}
+          PROMOTION_PREFIX: ${{ needs.plan.outputs.promotion_prefix }}
+          EXPECTED_TREE: ${{ needs.validate.outputs.head_tree }}
+        run: |
+          set -euo pipefail
+          bash sf-pipeline/scripts/promote.sh cut
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          if [[ "$tree" != "$EXPECTED_TREE" ]]; then
+            echo "::error::Rebuilt tree ${tree} differs from the validated tree ${EXPECTED_TREE}; refusing to release."
+            exit 1
+          fi
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Rebuilt tree matches the validated tree: ${tree}"
+
+      - name: Quick-deploy the validated id
+        id: deploy
+        uses: ./sf-pipeline/deploy
+        with:
+          environment: ${{ needs.plan.outputs.prod_name }}
+          ref: ${{ steps.rebuild.outputs.head_sha }}
+          quick_deploy_id: ${{ needs.validate.outputs.validated_id }}
+          baseline_branch: ${{ needs.plan.outputs.prod_branch }}
+          node_version: ${{ needs.plan.outputs.node_version }}
+          is_production: "true"
+          sf_consumer_key: ${{ secrets.SF_CONSUMER_KEY }}
+          sf_username: ${{ secrets.SF_USERNAME }}
+          sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
+          sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+
+      - name: Merge into production branch
+        id: merge
+        if: steps.deploy.outputs.outcome == 'success'
+        uses: ./sf-pipeline/promote
+        with:
+          mode: merge
+          target_branch: ${{ needs.plan.outputs.prod_branch }}
+          target_env: ${{ needs.plan.outputs.prod_name }}
+          work_item: ${{ needs.plan.outputs.label }}
+          target_sha_at_cut: ${{ needs.validate.outputs.target_sha_at_cut }}
+          deployed_sha: ${{ steps.rebuild.outputs.head_sha }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - uses: actions/download-artifact@v8
+        if: steps.merge.outputs.merged == 'true'
+        with:
+          name: release-manifest
+
+      - name: Tag and publish the GitHub Release
+        id: release
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          TAG: ${{ needs.plan.outputs.label }}
+          SHA: ${{ steps.merge.outputs.merge_sha }}
+          NAME: ${{ needs.plan.outputs.name }}
+          DEPLOY_ID: ${{ needs.validate.outputs.validated_id }}
+          COVERAGE: ${{ needs.validate.outputs.coverage_percent }}
+          TESTS: ${{ needs.validate.outputs.tests_used }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin
+          git tag -a "$TAG" "$SHA" -m "Release ${NAME} (deploy ${DEPLOY_ID})"
+          git push --quiet origin "refs/tags/${TAG}"
+          {
+            echo "Production release **${NAME}**, quick-deployed from validated deploy \`${DEPLOY_ID}\`."
+            echo
+            echo "- Commit: \`${SHA}\`"
+            echo "- Tests: ${TESTS:-none}"
+            echo "- Coverage: ${COVERAGE:-n/a}"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            [[ -f manifest.md ]] && cat manifest.md
+          } > release-notes.md
+          url="$(gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "Release ${NAME}" --notes-file release-notes.md)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Published $url"
+
+      - name: Hub callback (released)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EVENT_TYPE: ${{ steps.merge.outputs.merged == 'true' && 'Release' || 'QuickDeploy' }}
+          STATUS: ${{ steps.merge.outputs.merged == 'true' && 'Success' || 'Failed' }}
+          ENVIRONMENT: ${{ needs.plan.outputs.prod_name }}
+          COMMIT_SHA: ${{ steps.merge.outputs.merge_sha }}
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          MESSAGE: ${{ steps.release.outputs.url || steps.merge.outputs.reason || 'Quick deploy did not succeed' }}
+          PROMOTION_BRANCH: ${{ needs.plan.outputs.promotion_prefix }}${{ needs.plan.outputs.label }}-to-${{ needs.plan.outputs.prod_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Notify
+        if: always() && needs.plan.outputs.notify_webex == 'true'
+        env:
+          NOTIFY_WEBEX: "true"
+          WEBEX_BOT_TOKEN: ${{ secrets.WEBEX_BOT_TOKEN }}
+          WEBEX_ROOM_ID: ${{ secrets.WEBEX_ROOM_ID }}
+          WEBEX_WEBHOOK_URL: ${{ secrets.WEBEX_WEBHOOK_URL }}
+        run: |
+          bash sf-pipeline/scripts/webex-notify.sh "Production release **${{ needs.plan.outputs.name }}**: ${{ steps.deploy.outputs.outcome || 'failure' }} — ${{ steps.release.outputs.url || github.server_url }}"

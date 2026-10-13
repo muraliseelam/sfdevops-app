@@ -1,0 +1,102 @@
+# sf-ops-recreate-feature — rebuild a feature branch cleanly from the baseline.
+#
+# When a feature branch has drifted (merged other branches in, carries unrelated history, or
+# conflicts everywhere), cut a fresh branch from the baseline and carry over only the work
+# item's own files: the paths given, or every path the old branch changed relative to its
+# merge-base with the baseline. The old branch is kept as backup/<branch>-<timestamp>. Feature
+# branches are not environment branches, so replacing one is allowed.
+name: sf-ops-recreate-feature
+run-name: "Recreate ${{ inputs.feature_branch || inputs.work_item }} from the baseline"
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_item:
+        description: Work item key
+        type: string
+        required: true
+      work_item_id:
+        description: Hub record id
+        type: string
+        required: false
+        default: ""
+      feature_branch:
+        description: Feature branch (blank = feature prefix + work item)
+        type: string
+        required: false
+        default: ""
+      paths:
+        description: Newline- or comma-separated paths to carry over (blank = everything the old branch changed)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  recreate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - name: Rebuild
+        id: rebuild
+        env:
+          WI: ${{ inputs.work_item }}
+          INPUT_BRANCH: ${{ inputs.feature_branch }}
+          PREFIX: ${{ steps.cfg.outputs.feature_prefix }}
+          BASELINE: ${{ steps.cfg.outputs.baseline_branch }}
+          SRC: ${{ steps.cfg.outputs.source_path }}
+          PATHS: ${{ inputs.paths }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          feature="${INPUT_BRANCH:-${PREFIX}${WI}}"
+          git ls-remote --exit-code --heads origin "$feature" >/dev/null || { echo "::error::${feature} does not exist"; exit 1; }
+          git fetch --no-tags --quiet origin "+refs/heads/${feature}:refs/remotes/origin/${feature}"
+          old="$(git rev-parse "origin/${feature}")"
+          base="$(git merge-base "origin/${BASELINE}" "$old")"
+          if [[ -n "$PATHS" ]]; then
+            tr ',' '\n' <<<"$PATHS" | sed 's/^ *//;s/ *$//' | grep -v '^$' > carry.txt
+          else
+            git diff --name-only "$base" "$old" -- "$SRC" > carry.txt
+          fi
+          echo "Carrying $(wc -l < carry.txt) path(s) from ${old:0:12}:"; cat carry.txt
+          backup="backup/${feature}-$(date -u +%Y%m%d%H%M%S)"
+          git push --quiet origin "${old}:refs/heads/${backup}"
+          git checkout --quiet -B "$feature" "origin/${BASELINE}"
+          while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            if git cat-file -e "${old}:${p}" 2>/dev/null; then
+              git checkout "$old" -- "$p"
+            else
+              git rm --quiet --ignore-unmatch -- "$p"
+            fi
+          done < carry.txt
+          git add -A "$SRC"
+          git commit --quiet --allow-empty -m "[${WI}] Recreate ${feature} from ${BASELINE}" -m "Carried over $(wc -l < carry.txt) path(s) from ${old}. Previous branch kept as ${backup}."
+          git push --quiet --force-with-lease="${feature}:${old}" origin "HEAD:refs/heads/${feature}"
+          python3 sf-pipeline/scripts/commit_helper.py payload --from "origin/${BASELINE}" --to HEAD --source-path "$SRC" --out components.json
+          { echo "sha=$(git rev-parse HEAD)"; echo "backup=$backup"; echo "feature=$feature"; } >> "$GITHUB_OUTPUT"
+          echo "### Recreated \`${feature}\` from \`${BASELINE}\` (backup: \`${backup}\`)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Hub callback
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ inputs.work_item }}
+          EVENT_TYPE: Commit
+          STATUS: ${{ job.status == 'success' && 'Success' || 'Failed' }}
+          COMMIT_SHA: ${{ steps.rebuild.outputs.sha }}
+          MESSAGE: "Feature branch recreated from the baseline; backup ${{ steps.rebuild.outputs.backup }}"
+          COMPONENTS_JSON_FILE: components.json
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

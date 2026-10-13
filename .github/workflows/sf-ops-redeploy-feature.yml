@@ -1,0 +1,41 @@
+# sf-ops-redeploy-feature — re-run a feature's deploy to an environment on demand (for
+# example after an org refresh, or when an earlier run was cancelled). It is exactly a
+# story-level promotion, so it reuses sf-promotion: same cut, same delta, same merge rules.
+name: sf-ops-redeploy-feature
+run-name: "Redeploy ${{ inputs.work_item }} → ${{ inputs.target_env }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_item:
+        description: Work item key
+        type: string
+        required: true
+      work_item_id:
+        description: Hub record id
+        type: string
+        required: false
+        default: ""
+      target_env:
+        description: Environment pipeline key (not production)
+        type: string
+        required: true
+      feature_ref:
+        description: Feature branch (blank = feature prefix + work item)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  redeploy:
+    uses: ./.github/workflows/sf-promotion.yml
+    with:
+      work_items: ${{ inputs.work_item }}
+      feature_refs: ${{ inputs.feature_ref }}
+      target_env: ${{ inputs.target_env }}
+    secrets: inherit

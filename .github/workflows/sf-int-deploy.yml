@@ -1,0 +1,365 @@
+# sf-int-deploy — deploy an approved PR's work into the environment its base branch maps to
+# (normally the entry environment), then merge.
+#
+# Gate: on the ENTRY stage an `approved` label counts only from a repository admin/maintainer;
+# a non-admin's label is removed, the PR is told why, and nothing runs. On later stages the
+# label is developer self-service. A native review approval always counts (GitHub already
+# forbids approving your own PR).
+#
+# Flow: promotion branch cut from the target → deploy delta(target_at_cut..merge) → only after
+# success, merge the promotion into the target (refused if the target moved meanwhile).
+name: sf-int-deploy
+run-name: "Deploy PR #${{ inputs.pr_number }} (${{ inputs.work_item }})"
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        type: string
+        required: true
+      work_item:
+        type: string
+        required: false
+        default: ""
+      work_item_id:
+        type: string
+        required: false
+        default: ""
+      approver:
+        type: string
+        required: false
+        default: ""
+      method:
+        type: string
+        required: false
+        default: manual
+      hold_reason:
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        type: string
+        required: true
+      work_item:
+        description: Work item key
+        type: string
+        required: false
+        default: ""
+      work_item_id:
+        description: Hub record id
+        type: string
+        required: false
+        default: ""
+      approver:
+        description: Approver login (blank = the person running this)
+        type: string
+        required: false
+        default: ""
+      method:
+        description: review | label | manual
+        type: string
+        required: false
+        default: manual
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  ctx:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+      approver: ${{ steps.who.outputs.approver }}
+      method: ${{ steps.who.outputs.method }}
+      base: ${{ steps.pr.outputs.base }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      pr_url: ${{ steps.pr.outputs.url }}
+      explicit_tests: ${{ steps.pr.outputs.explicit_tests }}
+      bypass: ${{ steps.bypass.outputs.bypass }}
+      work_item: ${{ steps.who.outputs.work_item }}
+      r_name: ${{ steps.resolve.outputs.r_name }}
+      r_branch: ${{ steps.resolve.outputs.r_branch }}
+      r_gh_environment: ${{ steps.resolve.outputs.r_gh_environment }}
+      r_test_level: ${{ steps.resolve.outputs.r_test_level }}
+      r_is_entry: ${{ steps.resolve.outputs.r_is_entry }}
+      source_path: ${{ steps.cfg.outputs.source_path }}
+      api_version: ${{ steps.cfg.outputs.api_version }}
+      node_version: ${{ steps.cfg.outputs.node_version }}
+      promotion_prefix: ${{ steps.cfg.outputs.promotion_prefix }}
+      coverage_threshold: ${{ steps.cfg.outputs.coverage_threshold }}
+      gate_apex_coverage: ${{ steps.cfg.outputs.gate_apex_coverage }}
+      profiles_mode: ${{ steps.cfg.outputs.profiles_mode }}
+      notify_webex: ${{ steps.cfg.outputs.notify_webex }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+
+      - name: Pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json number,state,baseRefName,headRefName,headRefOid,title,body,url,labels > pr.json
+          python3 - <<'PY'
+          import json, os, re
+          pr = json.load(open("pr.json"))
+          m = re.search(r"^\s*Specified-Tests:\s*(.+)$", pr.get("body") or "", re.M | re.I)
+          tests = ",".join(t.strip() for t in m.group(1).split(",") if t.strip()) if m else ""
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write(f"state={pr['state']}\nbase={pr['baseRefName']}\nhead_ref={pr['headRefName']}\n")
+              o.write(f"head_sha={pr['headRefOid']}\nurl={pr['url']}\nexplicit_tests={tests}\n")
+              o.write("title<<EOF_T\n" + pr["title"] + "\nEOF_T\n")
+          PY
+
+      - name: Config
+        id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+
+      - name: Resolve the base branch
+        id: resolve
+        run: python3 sf-pipeline/scripts/plan.py resolve "${{ steps.pr.outputs.base }}"
+
+      - name: Approver and method
+        id: who
+        env:
+          INPUT_APPROVER: ${{ inputs.approver }}
+          INPUT_METHOD: ${{ inputs.method }}
+          INPUT_WI: ${{ inputs.work_item }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          TITLE: ${{ steps.pr.outputs.title }}
+          FEATURE: ${{ steps.cfg.outputs.feature_prefix }}
+          PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          approver="${INPUT_APPROVER:-$GITHUB_ACTOR}"
+          method="${INPUT_METHOD:-manual}"
+          wi="$INPUT_WI"
+          if [[ -z "$wi" && "$HEAD_REF" == "$FEATURE"* ]]; then wi="${HEAD_REF#"$FEATURE"}"; fi
+          [[ -n "$wi" ]] || wi="$(grep -oE '[A-Z][A-Z0-9]+-[0-9]+' <<<"$TITLE" | head -1 || true)"
+          [[ -n "$wi" ]] || wi="PR-${PR}"
+          { echo "approver=$approver"; echo "method=$method"; echo "work_item=$wi"; } >> "$GITHUB_OUTPUT"
+          echo "Approver: @$approver via $method"
+
+      - name: Approval gate
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr_number }}
+          STATE: ${{ steps.pr.outputs.state }}
+          FOUND: ${{ steps.resolve.outputs.r_found }}
+          IS_PROD: ${{ steps.resolve.outputs.r_is_prod }}
+          IS_ENTRY: ${{ steps.resolve.outputs.r_is_entry }}
+          ENV_NAME: ${{ steps.resolve.outputs.r_name }}
+          APPROVER: ${{ steps.who.outputs.approver }}
+          METHOD: ${{ steps.who.outputs.method }}
+          LABEL: ${{ steps.cfg.outputs.approved_label }}
+          HOLD: ${{ inputs.hold_reason }}
+        run: |
+          set -euo pipefail
+          deny() { echo "::warning::$1"; echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          [[ "$STATE" == "OPEN" ]] || deny "PR #$PR is $STATE; nothing to deploy."
+          [[ "$FOUND" == "true" ]] || deny "The PR base is not a pipeline branch."
+          [[ "$IS_PROD" != "true" ]] || deny "Production is released by sf-prod-release."
+          if [[ "$IS_ENTRY" == "true" ]]; then
+            case "$METHOD" in
+              label)
+                if ! bash sf-pipeline/scripts/gate.sh is-admin "$APPROVER"; then
+                  bash sf-pipeline/scripts/gate.sh drop-label "$PR" "$LABEL" \
+                    "@${APPROVER} the entry stage (\`${ENV_NAME}\`) needs a real review: the \`${LABEL}\` label counts only from repository admins or maintainers, so it was removed. Ask a reviewer to approve the PR."
+                  deny "Non-admin @${APPROVER} added '${LABEL}' on the entry stage; label removed, nothing deployed."
+                fi ;;
+              manual)
+                bash sf-pipeline/scripts/gate.sh is-admin "$APPROVER" \
+                  || deny "A manual entry-stage deploy needs admin/maintain; @${APPROVER} has neither." ;;
+              review) : ;;
+              *) deny "Unknown approval method '$METHOD'." ;;
+            esac
+          fi
+          if [[ -n "$HOLD" ]]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body ":pause_button: Approval recorded, but the deploy to \`${ENV_NAME}\` is held: ${HOLD}. Fix it and approve again." || true
+            deny "Held: ${HOLD}"
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Bypass label (admin only, re-verified now)
+        id: bypass
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ steps.cfg.outputs.bypass_label }}
+          PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if ! python3 -c "import json,sys; sys.exit(0 if any(l['name']==sys.argv[1] for l in json.load(open('pr.json'))['labels']) else 1)" "$LABEL"; then
+            echo "bypass=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          who="$(bash sf-pipeline/scripts/gate.sh labeler "$PR" "$LABEL")"
+          if bash sf-pipeline/scripts/gate.sh is-admin "$who"; then
+            echo "bypass=true" >> "$GITHUB_OUTPUT"
+          else
+            bash sf-pipeline/scripts/gate.sh drop-label "$PR" "$LABEL" "@${who} \`${LABEL}\` is admin-only; removed."
+            echo "bypass=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: ctx
+    if: needs.ctx.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.ctx.outputs.r_gh_environment }}
+    concurrency:
+      group: sf-deploy-${{ needs.ctx.outputs.r_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Hub callback (running)
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ needs.ctx.outputs.work_item }}
+          EVENT_TYPE: Deploy
+          STATUS: Running
+          ENVIRONMENT: ${{ needs.ctx.outputs.r_name }}
+          COMMIT_SHA: ${{ needs.ctx.outputs.head_sha }}
+          APPROVER: ${{ needs.ctx.outputs.approver }}
+          PULL_REQUEST_URL: ${{ needs.ctx.outputs.pr_url }}
+          PULL_REQUEST_NUMBER: ${{ inputs.pr_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Cut promotion branch
+        id: promo
+        uses: ./sf-pipeline/promote
+        with:
+          mode: cut
+          target_branch: ${{ needs.ctx.outputs.r_branch }}
+          target_env: ${{ needs.ctx.outputs.r_name }}
+          work_item: ${{ needs.ctx.outputs.work_item }}
+          feature_refs: ${{ needs.ctx.outputs.head_sha }}
+          promotion_prefix: ${{ needs.ctx.outputs.promotion_prefix }}
+          pr_number: ${{ inputs.pr_number }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Deploy
+        id: deploy
+        uses: ./sf-pipeline/deploy
+        with:
+          environment: ${{ needs.ctx.outputs.r_name }}
+          ref: ${{ steps.promo.outputs.head_sha }}
+          check_only: "false"
+          test_level: ${{ needs.ctx.outputs.r_test_level }}
+          manifest_title: "${{ needs.ctx.outputs.work_item }} → ${{ needs.ctx.outputs.r_name }}"
+          baseline_branch: ${{ needs.ctx.outputs.r_branch }}
+          delta_from: ${{ steps.promo.outputs.target_sha_at_cut }}
+          source_path: ${{ needs.ctx.outputs.source_path }}
+          api_version: ${{ needs.ctx.outputs.api_version }}
+          node_version: ${{ needs.ctx.outputs.node_version }}
+          coverage_gate: ${{ needs.ctx.outputs.gate_apex_coverage }}
+          coverage_threshold: ${{ needs.ctx.outputs.coverage_threshold }}
+          profiles_mode: ${{ needs.ctx.outputs.profiles_mode }}
+          bypass: ${{ needs.ctx.outputs.bypass }}
+          specified_tests: ${{ needs.ctx.outputs.explicit_tests }}
+          sf_consumer_key: ${{ secrets.SF_CONSUMER_KEY }}
+          sf_username: ${{ secrets.SF_USERNAME }}
+          sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
+          sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+
+      - name: Merge the promotion (only after a successful deploy)
+        id: merge
+        if: steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes'
+        uses: ./sf-pipeline/promote
+        with:
+          mode: merge
+          target_branch: ${{ needs.ctx.outputs.r_branch }}
+          target_env: ${{ needs.ctx.outputs.r_name }}
+          work_item: ${{ needs.ctx.outputs.work_item }}
+          target_sha_at_cut: ${{ steps.promo.outputs.target_sha_at_cut }}
+          deployed_sha: ${{ steps.promo.outputs.head_sha }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Hub callback (merge status)
+        if: always() && steps.merge.outcome != 'skipped'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ needs.ctx.outputs.work_item }}
+          ENVIRONMENT: ${{ needs.ctx.outputs.r_name }}
+          TARGET_BRANCH: ${{ needs.ctx.outputs.r_branch }}
+          MERGE_SHA: ${{ steps.merge.outputs.merge_sha }}
+          MERGED: ${{ steps.merge.outputs.merged }}
+          REASON: ${{ steps.merge.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh merge-status merge
+
+      - name: Report
+        if: always()
+        uses: ./sf-pipeline/report
+        with:
+          kind: deploy
+          environment: ${{ needs.ctx.outputs.r_name }}
+          title: "Deployed to `${{ needs.ctx.outputs.r_name }}`${{ steps.merge.outputs.merged == 'true' && ' and merged' || '' }}"
+          outcome: ${{ steps.deploy.outputs.outcome || 'failure' }}
+          deploy_id: ${{ steps.deploy.outputs.deploy_id }}
+          coverage_percent: ${{ steps.deploy.outputs.coverage_percent }}
+          coverage_note: ${{ steps.deploy.outputs.coverage_note }}
+          tests_passed: ${{ steps.deploy.outputs.tests_passed }}
+          test_level: ${{ steps.deploy.outputs.test_level_used }}
+          tests: ${{ steps.deploy.outputs.tests_used }}
+          failing_methods: ${{ steps.deploy.outputs.failing_methods }}
+          head_sha: ${{ needs.ctx.outputs.head_sha }}
+          extra_md: ${{ steps.merge.outputs.reason && format('**Merge:** {0}', steps.merge.outputs.reason) || '' }}
+          pr_number: ${{ inputs.pr_number }}
+
+      - name: Hub callback (result)
+        if: always()
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          WORK_ITEM: ${{ needs.ctx.outputs.work_item }}
+          EVENT_TYPE: ${{ steps.promo.outputs.conflict == 'true' && 'Conflict' || 'Deploy' }}
+          STATUS: ${{ (steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes') && 'Success' || 'Failed' }}
+          ENVIRONMENT: ${{ needs.ctx.outputs.r_name }}
+          COMMIT_SHA: ${{ steps.merge.outputs.merge_sha || steps.promo.outputs.head_sha }}
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          COVERAGE_PERCENT: ${{ steps.deploy.outputs.coverage_percent }}
+          TESTS_PASSED: ${{ steps.deploy.outputs.tests_passed }}
+          FAILING_METHODS: ${{ steps.deploy.outputs.failing_methods }}
+          TEST_LEVEL: ${{ steps.deploy.outputs.test_level_used }}
+          COMPONENT_COUNT: ${{ steps.deploy.outputs.component_count }}
+          PROMOTION_BRANCH: ${{ steps.promo.outputs.promotion_branch }}
+          TARGET_SHA_AT_CUT: ${{ steps.promo.outputs.target_sha_at_cut }}
+          CONFLICT_PATHS: ${{ steps.promo.outputs.conflict_paths }}
+          PULL_REQUEST_URL: ${{ needs.ctx.outputs.pr_url }}
+          PULL_REQUEST_NUMBER: ${{ inputs.pr_number }}
+          MESSAGE: ${{ steps.merge.outputs.reason || steps.deploy.outputs.coverage_note }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+
+      - name: Notify
+        if: always() && needs.ctx.outputs.notify_webex == 'true'
+        env:
+          NOTIFY_WEBEX: "true"
+          WEBEX_BOT_TOKEN: ${{ secrets.WEBEX_BOT_TOKEN }}
+          WEBEX_ROOM_ID: ${{ secrets.WEBEX_ROOM_ID }}
+          WEBEX_WEBHOOK_URL: ${{ secrets.WEBEX_WEBHOOK_URL }}
+        run: |
+          bash sf-pipeline/scripts/webex-notify.sh "**${{ needs.ctx.outputs.work_item }}** → \`${{ needs.ctx.outputs.r_name }}\`: ${{ steps.deploy.outputs.outcome || 'failure' }} (merged: ${{ steps.merge.outputs.merged || 'false' }}) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

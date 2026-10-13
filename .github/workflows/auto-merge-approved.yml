@@ -1,0 +1,88 @@
+# auto-merge-approved — merge promotion PRs whose deploy is green.
+#
+# Promotions normally merge themselves right after their deploy. A promotion PR can be left
+# open when GitHub had not yet registered the deploy status, or a merge attempt timed out.
+# This sweeps those up: an open PR from a promotion branch whose head carries a successful
+# `sfdevops/deploy` status, and whose base has NOT moved since (mergeable and up to date), is
+# merged pinned to that head. A PR whose base moved is never merged; its deployed tree is
+# stale, so it is commented and left for a fresh promotion. Honours CDO_Project__c.Auto_Merge__c
+# when a hub is configured.
+name: auto-merge-approved
+run-name: "Auto-merge green promotions${{ inputs.target_env && format(' into {0}', inputs.target_env) || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: Limit to one environment (blank = all)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - name: Target branch
+        id: target
+        if: inputs.target_env != ''
+        run: python3 sf-pipeline/scripts/plan.py target "${{ inputs.target_env }}"
+      - name: Auto_Merge__c (hub)
+        id: policy
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HUB_JWT_KEY" ]]; then echo "auto_merge=true" >> "$GITHUB_OUTPUT"; echo "No hub: auto-merge on."; exit 0; fi
+          bash sf-pipeline/scripts/install-sf.sh >/dev/null
+          bash sf-pipeline/scripts/auth-hub.sh >/dev/null
+          repo="$GITHUB_REPOSITORY"
+          value="$(sf data query --target-org hub --json --query "SELECT Auto_Merge__c FROM CDO_Project__c WHERE Repository__c = '${repo}' AND Active__c = true ORDER BY CreatedDate DESC, Id DESC LIMIT 1" \
+                   | python3 -c "import json,sys; r=(json.load(sys.stdin).get('result') or {}).get('records') or []; print(str(r[0]['Auto_Merge__c']).lower() if r else 'true')")"
+          echo "auto_merge=$value" >> "$GITHUB_OUTPUT"
+          echo "CDO_Project__c.Auto_Merge__c = $value"
+      - name: Merge green promotions
+        if: steps.policy.outputs.auto_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          PREFIX: ${{ steps.cfg.outputs.promotion_prefix }}
+          ONLY_BASE: ${{ steps.target.outputs.r_branch }}
+        run: |
+          set -euo pipefail
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,headRefName,baseRefName,headRefOid,mergeStateStatus,url > prs.json
+          python3 - <<'PY' > candidates.tsv
+          import json, os
+          prefix, only = os.environ["PREFIX"], os.environ.get("ONLY_BASE", "")
+          for pr in json.load(open("prs.json")):
+              if pr["headRefName"].startswith(prefix) and (not only or pr["baseRefName"] == only):
+                  print("\t".join([str(pr["number"]), pr["headRefOid"], pr["mergeStateStatus"], pr["baseRefName"], pr["url"]]))
+          PY
+          merged=0
+          while IFS=$'\t' read -r num sha state base url; do
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/status" --jq '.statuses[] | select(.context=="sfdevops/deploy") | .state' | head -1 || true)"
+            if [[ "$status" != "success" ]]; then echo "#$num: no green deploy status on ${sha:0:12}; skipped"; continue; fi
+            if [[ "$state" == "BEHIND" || "$state" == "DIRTY" ]]; then
+              gh pr comment "$num" --repo "$GITHUB_REPOSITORY" --body "Not merged: \`${base}\` moved after this promotion was deployed, so merging would publish a tree that was never deployed. Run the promotion again." || true
+              echo "#$num: base moved ($state); not merged"; continue
+            fi
+            if gh pr merge "$num" --repo "$GITHUB_REPOSITORY" --merge --match-head-commit "$sha"; then
+              echo "- merged $url" >> "$GITHUB_STEP_SUMMARY"; merged=$((merged + 1))
+            else
+              echo "::warning::#$num could not be merged"
+            fi
+          done < candidates.tsv
+          echo "### Auto-merged ${merged} promotion PR(s)" >> "$GITHUB_STEP_SUMMARY"

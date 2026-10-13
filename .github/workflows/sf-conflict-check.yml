@@ -1,0 +1,113 @@
+# sf-conflict-check — pre-emptive overlap detection across in-flight work items.
+#
+# Two sources, joined on the component Unique ID ("Type:Member"):
+#   - git: every remote feature branch's changes relative to the baseline
+#   - hub: CDO_Component__c rows of work items that are not Done/Cancelled (when a hub exists)
+# Overlaps are surfaced BEFORE the promotion merge hits them: in the job summary and on each
+# affected work item in the hub. A real conflict is still caught (and fails loudly) at the
+# promotion-branch merge.
+name: sf-conflict-check
+
+on:
+  push:
+  schedule:
+    - cron: "23 */3 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      work_items:
+        description: Limit the report to these work items (comma-separated; blank = all)
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sf-conflict-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - name: Only feature-branch pushes matter
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref_name }}
+          PREFIX: ${{ steps.cfg.outputs.feature_prefix }}
+        run: |
+          if [[ "$EVENT" == "push" && "$REF" != "$PREFIX"* ]]; then echo "run=false" >> "$GITHUB_OUTPUT"; else echo "run=true" >> "$GITHUB_OUTPUT"; fi
+      - name: In-flight components from the hub
+        if: steps.gate.outputs.run == 'true'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+        run: |
+          set -euo pipefail
+          echo "[]" > hub-components.json
+          if [[ -z "$HUB_JWT_KEY" ]]; then echo "::notice::No hub; git-only conflict check."; exit 0; fi
+          bash sf-pipeline/scripts/install-sf.sh >/dev/null
+          bash sf-pipeline/scripts/auth-hub.sh >/dev/null
+          sf data query --target-org hub --json \
+            --query "SELECT Work_Item__r.Name, Unique_ID__c FROM CDO_Component__c WHERE Work_Item__r.Status__c NOT IN ('Done','Cancelled') AND Action__c != null" \
+            > hub-raw.json || true
+          python3 - <<'PY'
+          import json
+          raw = json.load(open("hub-raw.json"))
+          rows = [{"workItem": (r.get("Work_Item__r") or {}).get("Name"), "uniqueId": r.get("Unique_ID__c")}
+                  for r in (raw.get("result") or {}).get("records", [])]
+          json.dump([r for r in rows if r["workItem"] and r["uniqueId"]], open("hub-components.json", "w"))
+          print(f"{len(rows)} in-flight component row(s) from the hub")
+          PY
+      - name: Detect overlaps
+        id: overlaps
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          : > cc.out
+          GITHUB_OUTPUT="$PWD/cc.out" python3 sf-pipeline/scripts/conflict-check.py --git \
+            --baseline "${{ steps.cfg.outputs.baseline_branch }}" \
+            --feature-prefix "${{ steps.cfg.outputs.feature_prefix }}" \
+            --source-path "${{ steps.cfg.outputs.source_path }}" \
+            --hub-json hub-components.json
+          python3 sf-pipeline/scripts/ghout.py cc.out report >> "$GITHUB_STEP_SUMMARY"
+          python3 sf-pipeline/scripts/ghout.py cc.out overlaps_json > overlaps.json
+          echo "count=$(python3 sf-pipeline/scripts/ghout.py cc.out overlap_count)" >> "$GITHUB_OUTPUT"
+      - name: Tell the hub
+        if: steps.gate.outputs.run == 'true' && steps.overlaps.outputs.count != '0'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          ONLY: ${{ inputs.work_items }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > per-wi.tsv
+          import json, os
+          only = {w.strip() for w in os.environ.get("ONLY", "").split(",") if w.strip()}
+          per = {}
+          for o in json.loads(open("overlaps.json").read() or "[]"):
+              for wi in o["workItems"]:
+                  others = [w for w in o["workItems"] if w != wi]
+                  per.setdefault(wi, []).append(f"{o['uniqueId']} (also in {', '.join(others)})")
+          for wi, lines in sorted(per.items()):
+              if not only or wi in only:
+                  print(wi + "\t" + "\\n".join(lines))
+          PY
+          while IFS=$'\t' read -r wi lines; do
+            WORK_ITEM="$wi" EVENT_TYPE=Conflict STATUS=Success \
+              CONFLICT_PATHS="$(printf '%b' "$lines")" \
+              MESSAGE="Overlapping components with other in-flight work items" \
+              bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy
+          done < per-wi.tsv

@@ -1,0 +1,154 @@
+# sf-ops-rollback — redeploy a previous known-good SHA to a named environment.
+#
+# The rollback is itself a promotion, so it obeys deploy-then-merge: cut a promotion branch from
+# the environment branch, restore the source tree to the known-good commit on it (files changed
+# since are restored, files added since are deleted), deploy that delta (deletions included),
+# and only then merge the restoring commit into the environment branch. Branch and org agree
+# afterwards, and history keeps both the bad change and its rollback.
+name: sf-ops-rollback
+run-name: "Rollback ${{ inputs.target_env }} to ${{ inputs.sha }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: Environment pipeline key (production uses its reviewer-gated GitHub Environment)
+        type: string
+        required: true
+      sha:
+        description: Known-good commit to restore
+        type: string
+        required: true
+      test_level:
+        description: Override the test level (blank = configured)
+        type: string
+        required: false
+        default: ""
+      reason:
+        description: Why (recorded in the commit and the audit trail)
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      r_name: ${{ steps.target.outputs.r_name }}
+      r_branch: ${{ steps.target.outputs.r_branch }}
+      r_gh_environment: ${{ steps.target.outputs.r_gh_environment }}
+      r_is_prod: ${{ steps.target.outputs.r_is_prod }}
+      test_level: ${{ inputs.test_level || steps.target.outputs.r_test_level }}
+      source_path: ${{ steps.cfg.outputs.source_path }}
+      api_version: ${{ steps.cfg.outputs.api_version }}
+      node_version: ${{ steps.cfg.outputs.node_version }}
+      promotion_prefix: ${{ steps.cfg.outputs.promotion_prefix }}
+      destructive_tests: ${{ steps.cfg.outputs.destructive_tests }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - id: target
+        run: python3 sf-pipeline/scripts/plan.py target "${{ inputs.target_env }}"
+
+  rollback:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.r_gh_environment }}
+    concurrency:
+      group: sf-deploy-${{ needs.plan.outputs.r_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Build the restoring commit on a promotion branch
+        id: restore
+        env:
+          BRANCH: ${{ needs.plan.outputs.r_branch }}
+          ENV_NAME: ${{ needs.plan.outputs.r_name }}
+          SHA: ${{ inputs.sha }}
+          REASON: ${{ inputs.reason }}
+          SRC: ${{ needs.plan.outputs.source_path }}
+          PREFIX: ${{ needs.plan.outputs.promotion_prefix }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git cat-file -e "${SHA}^{commit}" || { echo "::error::${SHA} is not a commit in this repository"; exit 1; }
+          git fetch --no-tags --quiet origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+          cut="$(git rev-parse "origin/${BRANCH}")"
+          git merge-base --is-ancestor "$SHA" "$cut" || echo "::warning::${SHA} is not an ancestor of ${BRANCH}; restoring its tree anyway."
+          promo="${PREFIX}rollback-${SHA:0:10}-to-${ENV_NAME}"
+          git checkout --quiet -B "$promo" "$cut"
+          git rm -r --quiet --cached "$SRC" || true
+          rm -rf "$SRC"
+          git checkout "$SHA" -- "$SRC" 2>/dev/null || echo "::warning::${SRC} did not exist at ${SHA}"
+          git add -A "$SRC"
+          if git diff --cached --quiet; then
+            echo "::notice::${BRANCH} already matches ${SHA} under ${SRC}; nothing to roll back."
+            echo "no_op=true" >> "$GITHUB_OUTPUT"
+          else
+            git commit --quiet -m "Rollback ${ENV_NAME} to ${SHA:0:12}" -m "Reason: ${REASON}" -m "Requested by @${GITHUB_ACTOR} via sf-ops-rollback."
+            echo "no_op=false" >> "$GITHUB_OUTPUT"
+          fi
+          { echo "cut=$cut"; echo "head=$(git rev-parse HEAD)"; echo "branch=$promo"; } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the rollback
+        id: deploy
+        if: steps.restore.outputs.no_op != 'true'
+        uses: ./sf-pipeline/deploy
+        with:
+          environment: ${{ needs.plan.outputs.r_name }}
+          ref: ${{ steps.restore.outputs.head }}
+          test_level: ${{ needs.plan.outputs.test_level }}
+          manifest_title: "Rollback ${{ needs.plan.outputs.r_name }} to ${{ inputs.sha }}"
+          baseline_branch: ${{ needs.plan.outputs.r_branch }}
+          delta_from: ${{ steps.restore.outputs.cut }}
+          source_path: ${{ needs.plan.outputs.source_path }}
+          api_version: ${{ needs.plan.outputs.api_version }}
+          node_version: ${{ needs.plan.outputs.node_version }}
+          is_production: ${{ needs.plan.outputs.r_is_prod }}
+          destructive_test_names: ${{ needs.plan.outputs.r_is_prod == 'true' && needs.plan.outputs.destructive_tests || '' }}
+          ignore_warnings: "true"
+          sf_consumer_key: ${{ secrets.SF_CONSUMER_KEY }}
+          sf_username: ${{ secrets.SF_USERNAME }}
+          sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
+          sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+
+      - name: Merge the rollback (only after a successful deploy)
+        id: merge
+        if: steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes'
+        uses: ./sf-pipeline/promote
+        with:
+          mode: merge
+          target_branch: ${{ needs.plan.outputs.r_branch }}
+          target_env: ${{ needs.plan.outputs.r_name }}
+          work_item: rollback-${{ inputs.sha }}
+          target_sha_at_cut: ${{ steps.restore.outputs.cut }}
+          deployed_sha: ${{ steps.restore.outputs.head }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Hub callback
+        if: always() && steps.restore.outputs.no_op != 'true'
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          EVENT_TYPE: Rollback
+          STATUS: ${{ steps.deploy.outputs.outcome == 'success' && 'Success' || 'Failed' }}
+          ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
+          COMMIT_SHA: ${{ steps.merge.outputs.merge_sha || steps.restore.outputs.head }}
+          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+          MESSAGE: "Rollback to ${{ inputs.sha }}: ${{ inputs.reason }}. Merged: ${{ steps.merge.outputs.merged || 'false' }} ${{ steps.merge.outputs.reason }}"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash sf-pipeline/scripts/hub-notify.sh deploy-callback deploy

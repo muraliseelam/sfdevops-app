@@ -1,0 +1,83 @@
+# sf-auth-check — authenticate to every org in the config and run `sf org display`.
+# Run it after onboarding an org or rotating credentials. The matrix comes from
+# pipeline.config.yml, so it covers 3, 4 or 5 environments without edits.
+name: sf-auth-check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - id: cfg
+        run: python3 sf-pipeline/scripts/plan.py outputs
+      - id: targets
+        env:
+          AUTO: ${{ steps.cfg.outputs.auto_json }}
+          SOURCES: ${{ steps.cfg.outputs.source_orgs_json }}
+          PROD_NAME: ${{ steps.cfg.outputs.prod_name }}
+          PROD_VALIDATE: ${{ steps.cfg.outputs.prod_validate_environment }}
+          PROD_DEPLOY: ${{ steps.cfg.outputs.prod_deploy_environment }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          t = [{"name": o["name"], "gh_environment": o["gh_environment"]} for o in json.loads(os.environ["SOURCES"])]
+          t += [{"name": e["name"], "gh_environment": e["gh_environment"]} for e in json.loads(os.environ["AUTO"])]
+          t.append({"name": os.environ["PROD_NAME"] + "-validate", "gh_environment": os.environ["PROD_VALIDATE"]})
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write("targets=" + json.dumps(t) + "\n")
+          print(json.dumps(t, indent=2))
+          PY
+
+  auth:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    environment: ${{ matrix.target.gh_environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - run: bash sf-pipeline/scripts/install-sf.sh
+      - name: Authenticate
+        env:
+          SF_CONSUMER_KEY: ${{ secrets.SF_CONSUMER_KEY }}
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
+          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+        run: bash sf-pipeline/scripts/auth-jwt.sh "${{ matrix.target.name }}"
+      - name: sf org display
+        run: |
+          sf org display --target-org "${{ matrix.target.name }}" --json | python3 -c "import json,sys; r=json.load(sys.stdin)['result']; print({k: r.get(k) for k in ('id','instanceUrl','apiVersion','connectedStatus')})"
+
+  hub:
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sf-pipeline
+      - name: Hub authentication
+        env:
+          HUB_CONSUMER_KEY: ${{ secrets.HUB_CONSUMER_KEY }}
+          HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
+          HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
+          HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HUB_JWT_KEY" ]]; then echo "::notice::No hub configured (GitHub-only mode)."; exit 0; fi
+          bash sf-pipeline/scripts/install-sf.sh
+          bash sf-pipeline/scripts/auth-hub.sh
+          sf org display --target-org hub --json | python3 -c "import json,sys; r=json.load(sys.stdin)['result']; print({k: r.get(k) for k in ('id','instanceUrl','apiVersion','connectedStatus')})"

@@ -1,0 +1,250 @@
+name: SF Quality gates
+description: >
+  PMD against sf-pipeline/config/pmd/ruleset.xml when Apex is in the delta; LWC Jest when an
+  LWC bundle changed; SonarQube when Apex OR LWC/Aura JS changed. Each gate is skipped
+  entirely when its component type is absent, so unrelated changes are not slowed. Findings are
+  written as JSON for the hub (CDO_Scan_Finding__c).
+
+inputs:
+  has_apex:
+    description: Apex classes or triggers in the delta
+    required: true
+  has_js:
+    description: LWC or Aura JavaScript in the delta
+    required: true
+  has_lwc:
+    description: LWC bundles in the delta
+    required: false
+    default: "false"
+  changed_files_file:
+    description: Newline list of changed paths (from delta.sh)
+    required: true
+  source_path:
+    description: Metadata root
+    required: false
+    default: force-app
+  gate_pmd:
+    description: Run PMD
+    required: false
+    default: "true"
+  gate_sonar:
+    description: Run SonarQube
+    required: false
+    default: "true"
+  gate_jest:
+    description: Run LWC Jest
+    required: false
+    default: "true"
+  pmd_version:
+    description: PMD release to download
+    required: false
+    default: "7.28.0"
+  pmd_fail_priority:
+    description: Violations at this priority or more severe (lower number) fail the gate
+    required: false
+    default: "2"
+  node_version:
+    description: Node for Jest
+    required: false
+    default: "22"
+  sonar_token:
+    description: SONAR_TOKEN secret (blank = Sonar skipped with a warning)
+    required: false
+    default: ""
+  sonar_host_url:
+    description: SONAR_HOST_URL secret
+    required: false
+    default: ""
+  sonar_project_key:
+    description: Sonar project key (defaults to owner_repo)
+    required: false
+    default: ""
+  advisory:
+    description: "true = report findings but never fail (admin bypass label)"
+    required: false
+    default: "false"
+
+outputs:
+  pmd_status:
+    description: passed | failed | skipped
+    value: ${{ steps.pmd.outputs.status || 'skipped' }}
+  pmd_violations:
+    description: Total PMD violations
+    value: ${{ steps.pmd.outputs.violations || '0' }}
+  jest_status:
+    description: passed | failed | skipped
+    value: ${{ steps.jest.outputs.status || 'skipped' }}
+  sonar_status:
+    description: passed | failed | skipped
+    value: ${{ steps.sonargate.outputs.sonar_status || 'skipped' }}
+  findings_file:
+    description: JSON array of findings for the hub callback
+    value: findings.json
+
+runs:
+  using: composite
+  steps:
+    - name: Init findings
+      shell: bash
+      run: echo "[]" > findings.json
+
+    # ---------------------------------------------------------------- PMD
+    - uses: actions/setup-java@v6
+      if: inputs.gate_pmd == 'true' && inputs.has_apex == 'true'
+      with:
+        distribution: temurin
+        java-version: "21"
+
+    - name: PMD (Apex)
+      id: pmd
+      if: inputs.gate_pmd == 'true' && inputs.has_apex == 'true'
+      shell: bash
+      env:
+        PMD_VERSION: ${{ inputs.pmd_version }}
+        FAIL_PRIORITY: ${{ inputs.pmd_fail_priority }}
+        CHANGED: ${{ inputs.changed_files_file }}
+        RULESET: ${{ github.action_path }}/../config/pmd/ruleset.xml
+        ADVISORY: ${{ inputs.advisory }}
+      run: |
+        set -euo pipefail
+        grep -E '\.(cls|trigger)$' "$CHANGED" | while read -r f; do [[ -f "$f" ]] && echo "$f"; done > pmd-files.txt || true
+        if [[ ! -s pmd-files.txt ]]; then
+          echo "status=skipped" >> "$GITHUB_OUTPUT"; echo "violations=0" >> "$GITHUB_OUTPUT"
+          echo "PMD: only deletions of Apex in this delta; nothing to scan." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        zip="pmd-dist-${PMD_VERSION}-bin.zip"
+        curl -fsSL -o "$RUNNER_TEMP/$zip" "https://github.com/pmd/pmd/releases/download/pmd_releases%2F${PMD_VERSION}/${zip}"
+        unzip -q -o "$RUNNER_TEMP/$zip" -d "$RUNNER_TEMP"
+        pmd="$RUNNER_TEMP/pmd-bin-${PMD_VERSION}/bin/pmd"
+        set +e
+        "$pmd" check --file-list pmd-files.txt -R "$RULESET" -f json -r pmd-report.json --no-cache --no-progress
+        code=$?
+        set -e
+        if [[ "$code" != "0" && "$code" != "4" ]]; then
+          echo "::error::PMD itself failed (exit $code)"; exit 1
+        fi
+        python3 - <<'PY'
+        import json, os
+        fail_at = int(os.environ["FAIL_PRIORITY"])
+        report = json.load(open("pmd-report.json", encoding="utf-8"))
+        sev = {1: "Critical", 2: "High", 3: "Medium", 4: "Low", 5: "Info"}
+        findings, blocking, lines = [], 0, []
+        for f in report.get("files", []):
+            path = os.path.relpath(f["filename"])
+            for v in f.get("violations", []):
+                p = int(v.get("priority", 3))
+                blocking += p <= fail_at
+                findings.append({"tool": "PMD", "rule": v.get("rule"), "severity": sev.get(p, "Medium"),
+                                 "file": path, "line": v.get("beginline"), "message": v.get("description", "")[:2000]})
+                level = "error" if p <= fail_at else "warning"
+                print(f"::{level} file={path},line={v.get('beginline')},title=PMD {v.get('rule')}::{v.get('description')}")
+                lines.append(f"| {sev.get(p)} | `{path}:{v.get('beginline')}` | {v.get('rule')} | {v.get('description')} |")
+        json.dump(findings, open("findings.json", "w", encoding="utf-8"))
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as s:
+            s.write(f"### PMD: {len(findings)} finding(s), {blocking} blocking (priority ≤ {fail_at})\n\n")
+            if lines:
+                s.write("| Severity | Location | Rule | Message |\n|---|---|---|---|\n" + "\n".join(lines[:200]) + "\n")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+            o.write(f"violations={len(findings)}\nblocking={blocking}\n")
+            o.write(f"status={'failed' if blocking else 'passed'}\n")
+        PY
+        if [[ "$(grep -E '^status=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)" == "failed" ]]; then
+          if [[ "$ADVISORY" == "true" ]]; then
+            echo "::warning::PMD found blocking violations; advisory mode (admin bypass) lets the run continue."
+          else
+            echo "::error::PMD found blocking violations."; exit 1
+          fi
+        fi
+
+    # ---------------------------------------------------------------- LWC Jest
+    - name: Detect Jest setup
+      id: jestcfg
+      if: inputs.gate_jest == 'true' && inputs.has_lwc == 'true'
+      shell: bash
+      run: |
+        if [[ -f package.json ]] && grep -q 'sfdx-lwc-jest' package.json; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::LWC changed but the repo has no package.json with @salesforce/sfdx-lwc-jest; the Jest gate is skipped."
+        fi
+
+    - uses: actions/setup-node@v7
+      if: steps.jestcfg.outputs.present == 'true'
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: LWC Jest
+      id: jest
+      if: steps.jestcfg.outputs.present == 'true'
+      shell: bash
+      env:
+        CHANGED: ${{ inputs.changed_files_file }}
+        ADVISORY: ${{ inputs.advisory }}
+      run: |
+        set -euo pipefail
+        if [[ -f package-lock.json ]]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+        mapfile -t related < <(grep -E '/lwc/[^/]+/[^/]+\.js$' "$CHANGED" | grep -v '__tests__' | while read -r f; do [[ -f "$f" ]] && echo "$f"; done)
+        set +e
+        if [[ ${#related[@]} -gt 0 ]]; then
+          npx sfdx-lwc-jest -- --ci --passWithNoTests --findRelatedTests "${related[@]}"
+        else
+          npx sfdx-lwc-jest -- --ci --passWithNoTests
+        fi
+        code=$?
+        set -e
+        if [[ "$code" == "0" ]]; then echo "status=passed" >> "$GITHUB_OUTPUT"; exit 0; fi
+        echo "status=failed" >> "$GITHUB_OUTPUT"
+        if [[ "$ADVISORY" == "true" ]]; then echo "::warning::LWC Jest failed; advisory mode lets the run continue."; exit 0; fi
+        echo "::error::LWC Jest failed."; exit 1
+
+    # ---------------------------------------------------------------- SonarQube
+    - name: Sonar applicability
+      id: sonarcfg
+      if: inputs.gate_sonar == 'true' && (inputs.has_apex == 'true' || inputs.has_js == 'true')
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+        SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
+        KEY: ${{ inputs.sonar_project_key }}
+      run: |
+        if [[ -z "$SONAR_TOKEN" || -z "$SONAR_HOST_URL" ]]; then
+          echo "run=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::SonarQube gate skipped: SONAR_TOKEN/SONAR_HOST_URL not set."
+        else
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          key="${KEY:-${GITHUB_REPOSITORY//\//_}}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: SonarQube scan
+      if: steps.sonarcfg.outputs.run == 'true'
+      uses: SonarSource/sonarqube-scan-action@v8
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+        SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
+      with:
+        args: >
+          -Dsonar.projectKey=${{ steps.sonarcfg.outputs.key }}
+          -Dsonar.sources=${{ inputs.source_path }}
+          -Dsonar.qualitygate.wait=false
+
+    - name: SonarQube quality gate
+      id: sonargate
+      if: steps.sonarcfg.outputs.run == 'true'
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar_token }}
+        SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
+        SONAR_PROJECT_KEY: ${{ steps.sonarcfg.outputs.key }}
+        ADVISORY: ${{ inputs.advisory }}
+      run: |
+        set +e
+        bash "${{ github.action_path }}/../scripts/sonar-gate.sh"
+        code=$?
+        set -e
+        if [[ "$code" != "0" && "$ADVISORY" == "true" ]]; then
+          echo "::warning::SonarQube gate failed; advisory mode lets the run continue."; exit 0
+        fi
+        exit $code
