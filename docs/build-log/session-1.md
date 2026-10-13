@@ -168,3 +168,35 @@ Apex coverage **94 %**, not yet promoted (beta). One-command install into a bran
   validation message, proving routing and auth.
 - `gate.sh` gained tests (14 assertions) proving the entry-stage label gate without a second
   GitHub account.
+
+## Contract #2 (inbound callbacks), live against the hub
+
+`bash sf-pipeline/tests/smoke_hub_callbacks.sh sfp-hub` posts, through the same
+`hub_payload.py` + `hub-callback.sh` (`sf api request rest`) the workflows use, the sequence a real
+change produces, for a fresh `[smoke]` work item: Commit → Validation Running → Validation
+Success → entry-hop Deploy Running → Deploy Success. All five returned **HTTP 200**, and:
+
+    PASS  one CDO_Commit__c (1)
+    PASS  two CDO_Component__c (2)
+    PASS  ONE validation row for the Running→Success pair (1)
+    PASS  ONE deploy row for the Running→Success pair (1)
+    PASS  deploy row is Success (Success)
+    PASS  entry-hop junction row written (1)
+    PASS  entry-hop promotion Deployed (Deployed)
+    PASS  work item moved to the entry stage (int)
+    PASS  entry environment Healthy (Healthy)
+    PASS  audit events written (5)
+    Hub callback smoke test passed for WI-0001
+
+(The first run's two "failures" were the test's own SOQL aliases on relationship fields, which
+SOQL rejects outside aggregates; the records were correct. The smoke work items WI-0000 and
+WI-0001 remain in the hub, labelled `[smoke]`.)
+
+## Hub redeploy traps
+
+- Permission sets inside a permission set group cannot be redeployed while the group
+  recalculates ("The ... permission set group is updating"); `deploy-hub.sh` now waits for every
+  `CDO_*` group to be `Updated` before steps 9 and 10.
+- `CDO_WorkItemService.openPullRequest` now writes `Specified-Tests: <tests>` first in the PR
+  body when the work item names tests, so the work item's explicit tests reach validation.
+  Redeployed with 130/130 tests.
