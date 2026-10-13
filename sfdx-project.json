@@ -6,11 +6,15 @@
       "package": "SF DevOps",
       "versionName": "v0.1",
       "versionNumber": "0.1.0.NEXT",
-      "versionDescription": "SF DevOps hub: the Salesforce side of the open-source Salesforce DevOps delivery platform."
+      "versionDescription": "SF DevOps hub: the Salesforce side of an open-source Salesforce DevOps delivery platform (GitHub Actions + one YAML config)."
     }
   ],
   "name": "sfdevops-app-hub",
   "namespace": "",
   "sfdcLoginUrl": "https://login.salesforce.com",
-  "sourceApiVersion": "66.0"
+  "sourceApiVersion": "66.0",
+  "packageAliases": {
+    "SF DevOps": "0Hohm0000000VAHCA2",
+    "SF DevOps@0.1.0-1": "04thm000002tWkTAAU"
+  }
 }
