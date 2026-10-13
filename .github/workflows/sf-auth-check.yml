@@ -57,6 +57,7 @@ jobs:
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
           SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+          SF_AUTH_URL: ${{ secrets.SF_AUTH_URL }}
         run: bash sf-pipeline/scripts/auth-jwt.sh "${{ matrix.target.name }}"
       - name: sf org display
         run: |
@@ -75,9 +76,10 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
         run: |
           set -euo pipefail
-          if [[ -z "$HUB_JWT_KEY" ]]; then echo "::notice::No hub configured (GitHub-only mode)."; exit 0; fi
+          if [[ -z "$HUB_JWT_KEY" && -z "$HUB_AUTH_URL" ]]; then echo "::notice::No hub configured (GitHub-only mode)."; exit 0; fi
           bash sf-pipeline/scripts/install-sf.sh
           bash sf-pipeline/scripts/auth-hub.sh
           sf org display --target-org hub --json | python3 -c "import json,sys; r=json.load(sys.stdin)['result']; print({k: r.get(k) for k in ('id','instanceUrl','apiVersion','connectedStatus')})"

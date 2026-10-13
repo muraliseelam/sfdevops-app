@@ -92,18 +92,25 @@ inputs:
     required: false
     default: "90"
   sf_consumer_key:
-    description: Connected App consumer key
-    required: true
+    description: Connected App / External Client App consumer key (JWT mode)
+    required: false
+    default: ""
   sf_username:
-    description: Integration username
-    required: true
+    description: Integration username (JWT mode)
+    required: false
+    default: ""
   sf_instance_url:
     description: Login / My Domain URL
     required: false
     default: ""
   sf_jwt_key:
-    description: base64-encoded server.key
-    required: true
+    description: base64-encoded server.key (JWT mode)
+    required: false
+    default: ""
+  sf_auth_url:
+    description: SFDX auth URL (alternative to JWT when the org cannot host a Connected App)
+    required: false
+    default: ""
 
 outputs:
   deploy_id:
@@ -169,13 +176,14 @@ runs:
       shell: bash
       run: bash "${{ github.action_path }}/../scripts/install-sf.sh"
 
-    - name: Authenticate (JWT)
+    - name: Authenticate (JWT, or SFDX auth URL)
       shell: bash
       env:
         SF_CONSUMER_KEY: ${{ inputs.sf_consumer_key }}
         SF_USERNAME: ${{ inputs.sf_username }}
         SF_INSTANCE_URL: ${{ inputs.sf_instance_url }}
         SF_JWT_KEY: ${{ inputs.sf_jwt_key }}
+        SF_AUTH_URL: ${{ inputs.sf_auth_url }}
       run: bash "${{ github.action_path }}/../scripts/auth-jwt.sh" "${{ inputs.environment }}"
 
     - name: Compute delta

@@ -81,6 +81,7 @@ jobs:
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
           SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+          SF_AUTH_URL: ${{ secrets.SF_AUTH_URL }}
         run: bash sf-pipeline/scripts/auth-jwt.sh src
       - name: Export
         run: |
@@ -121,6 +122,7 @@ jobs:
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
           SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+          SF_AUTH_URL: ${{ secrets.SF_AUTH_URL }}
         run: bash sf-pipeline/scripts/auth-jwt.sh tgt
       - name: Upsert, parents first
         id: upsert
@@ -145,6 +147,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           EVENT_TYPE: Data
           STATUS: ${{ steps.upsert.outcome == 'success' && 'Success' || 'Failed' }}
           ENVIRONMENT: ${{ inputs.target_env }}

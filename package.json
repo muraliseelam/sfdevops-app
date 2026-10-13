@@ -1,0 +1,12 @@
+{
+  "name": "sfdevops-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Business metadata validated and deployed by the SF DevOps pipeline",
+  "scripts": {
+    "test:unit": "sfdx-lwc-jest"
+  },
+  "devDependencies": {
+    "@salesforce/sfdx-lwc-jest": "7.9.0"
+  }
+}

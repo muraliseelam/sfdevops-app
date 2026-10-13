@@ -44,9 +44,10 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
         run: |
           set -euo pipefail
-          if [[ -z "$HUB_JWT_KEY" ]]; then echo "auto_merge=true" >> "$GITHUB_OUTPUT"; echo "No hub: auto-merge on."; exit 0; fi
+          if [[ -z "$HUB_JWT_KEY" && -z "$HUB_AUTH_URL" ]]; then echo "auto_merge=true" >> "$GITHUB_OUTPUT"; echo "No hub: auto-merge on."; exit 0; fi
           bash sf-pipeline/scripts/install-sf.sh >/dev/null
           bash sf-pipeline/scripts/auth-hub.sh >/dev/null
           repo="$GITHUB_REPOSITORY"

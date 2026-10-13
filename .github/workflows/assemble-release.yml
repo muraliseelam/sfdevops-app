@@ -53,6 +53,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           EVENT: ${{ github.event_name }}
           IN_ID: ${{ inputs.release_id }}
           IN_NAME: ${{ inputs.release_name }}
@@ -61,7 +62,7 @@ jobs:
           set -euo pipefail
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             python3 -c "import json,os; print(json.dumps([{'id': os.environ['IN_ID'], 'name': os.environ['IN_NAME'], 'workItems': [w.strip() for w in os.environ['IN_WIS'].split(',') if w.strip()], 'branches': {}}]))" > releases.json
-          elif [[ -z "$HUB_JWT_KEY" ]]; then
+          elif [[ -z "$HUB_JWT_KEY" && -z "$HUB_AUTH_URL" ]]; then
             echo "::notice::Scheduled assembly needs a hub; nothing to do in GitHub-only mode."
             echo "[]" > releases.json
           else
@@ -91,6 +92,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           PROD: ${{ steps.cfg.outputs.prod_branch }}
           PREFIX: ${{ steps.cfg.outputs.release_branch_prefix }}
           FEATURE_PREFIX: ${{ steps.cfg.outputs.feature_prefix }}

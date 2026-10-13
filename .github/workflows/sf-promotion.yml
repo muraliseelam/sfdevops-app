@@ -139,6 +139,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           PROMOTION_ID: ${{ inputs.promotion_id }}
           WORK_ITEM: ${{ inputs.work_items }}
           EVENT_TYPE: ${{ inputs.check_only == 'true' && 'Validation' || 'Deploy' }}
@@ -183,6 +184,7 @@ jobs:
           sf_username: ${{ secrets.SF_USERNAME }}
           sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
           sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+          sf_auth_url: ${{ secrets.SF_AUTH_URL }}
 
       - name: Merge the promotion (only after a successful deploy)
         id: merge
@@ -204,6 +206,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           PROMOTION_ID: ${{ inputs.promotion_id }}
           WORK_ITEM: ${{ inputs.work_items }}
           ENVIRONMENT: ${{ needs.plan.outputs.r_name }}
@@ -239,6 +242,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           PROMOTION_ID: ${{ inputs.promotion_id }}
           WORK_ITEM: ${{ inputs.work_items }}
           EVENT_TYPE: ${{ steps.promo.outputs.conflict == 'true' && 'Conflict' || (inputs.check_only == 'true' && 'Validation' || 'Deploy') }}

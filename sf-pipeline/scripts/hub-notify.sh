@@ -16,7 +16,7 @@ endpoint="${1:?usage: hub-notify.sh <deploy-callback|merge-status> <deploy|merge
 kind="${2:?usage: hub-notify.sh <deploy-callback|merge-status> <deploy|merge>}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -z "${HUB_CONSUMER_KEY:-}" || -z "${HUB_USERNAME:-}" || -z "${HUB_JWT_KEY:-}" ]]; then
+if [[ ( -z "${HUB_CONSUMER_KEY:-}" || -z "${HUB_USERNAME:-}" || -z "${HUB_JWT_KEY:-}" ) && -z "${HUB_AUTH_URL:-}" ]]; then
   echo "::notice::Hub callback skipped (${endpoint}): HUB_* secrets are not set; running in GitHub-only mode."
   exit 0
 fi

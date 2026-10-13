@@ -123,6 +123,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           WORK_ITEM: ${{ steps.decide.outputs.work_item }}
           EVENT_TYPE: Approval
           STATUS: Success

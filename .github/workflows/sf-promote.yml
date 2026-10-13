@@ -141,6 +141,7 @@ jobs:
           sf_username: ${{ secrets.SF_USERNAME }}
           sf_instance_url: ${{ secrets.SF_INSTANCE_URL }}
           sf_jwt_key: ${{ secrets.SF_JWT_KEY }}
+          sf_auth_url: ${{ secrets.SF_AUTH_URL }}
 
       - name: Merge (only after a successful deploy)
         id: merge
@@ -172,6 +173,7 @@ jobs:
           HUB_USERNAME: ${{ secrets.HUB_USERNAME }}
           HUB_INSTANCE_URL: ${{ secrets.HUB_INSTANCE_URL }}
           HUB_JWT_KEY: ${{ secrets.HUB_JWT_KEY }}
+          HUB_AUTH_URL: ${{ secrets.HUB_AUTH_URL }}
           PROMOTION_ID: ${{ inputs.promotion_id }}
           EVENT_TYPE: ${{ steps.promo.outputs.conflict == 'true' && 'Conflict' || (inputs.check_only == 'true' && 'Validation' || 'Deploy') }}
           STATUS: ${{ (steps.deploy.outputs.outcome == 'success' || steps.deploy.outputs.outcome == 'no_changes') && 'Success' || 'Failed' }}

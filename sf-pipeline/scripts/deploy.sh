@@ -27,7 +27,11 @@ set -euo pipefail
 : "${MODE:?MODE is required (validate|deploy|quick)}"
 OUT_JSON="${OUT_JSON:-deploy-result.json}"
 WAIT="${WAIT_MINUTES:-90}"
-PY="$(command -v python3 || command -v python || command -v py)"
+PY=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+[[ -n "$PY" ]] || { echo "::error::no working Python interpreter found"; exit 1; }
 
 emit() {
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"; fi

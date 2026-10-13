@@ -1,0 +1,16 @@
+<template>
+    <lightning-card title="Invoices" icon-name="custom:custom17">
+        <div class="slds-p-horizontal_medium">
+            <template lwc:if={hasData}>
+                <p class="count">{count} invoice(s)</p>
+                <p class="outstanding">
+                    Outstanding:
+                    <lightning-formatted-number value={outstanding} format-style="currency"></lightning-formatted-number>
+                </p>
+            </template>
+            <template lwc:elseif={error}>
+                <p class="slds-text-color_error">Invoices could not be loaded.</p>
+            </template>
+        </div>
+    </lightning-card>
+</template>
